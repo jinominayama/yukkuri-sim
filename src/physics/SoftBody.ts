@@ -1,0 +1,648 @@
+import { Quaternion, Vector3 } from 'three';
+
+/**
+ * XPBD（Extended Position Based Dynamics）による表面メッシュのソフトボディ。
+ * 拘束：辺の長さ（皮の張り）／体積保存（あんこ）／シェイプマッチング（弾力）／地面
+ *
+ * 描画には依存しない（three からは数学クラスのみ使用）。
+ */
+export interface SoftBodyParams {
+  /** 重力加速度 (m/s²) */
+  gravity: number;
+  /** 1ステップあたりの分割数（多いほど硬く安定） */
+  substeps: number;
+  /** 皮の伸びやすさ（XPBD コンプライアンス、0 で伸びない） */
+  edgeCompliance: number;
+  /** 体積の変わりやすさ（0 で体積完全保存） */
+  volumeCompliance: number;
+  /** 元の形に戻る強さ（1/60秒あたり、0〜1） */
+  shapeStiffness: number;
+  /** 跳躍中（溜め・空中・着地）の形に戻る強さ */
+  hopStiffness: number;
+  /** 腹ばいの間（倒れ込み・腹ばいの姿勢・起き上がり）の形に戻る強さ */
+  proneStiffness: number;
+  /** 仰向けの間（倒れ込み・仰向けの姿勢・起き上がり）の形に戻る強さ */
+  supineStiffness: number;
+  /** 姿勢を保つ強さ（傾きだけを直立に戻す。1/60秒あたり、0〜1） */
+  upright: number;
+  /** 揺れの減衰 (1/s)。全体の移動には効かず、体の変形・揺れだけを抑える */
+  damping: number;
+  /**
+   * 弾み（0〜1）。元の形に戻る動きのうち、跳ね返りや揺れの勢いに変わる割合。
+   * 1 でゴムまりのように跳ね返り、0 に近いほど餅のように「潰れて、じわっと戻る」
+   */
+  bounce: number;
+  /** 地面の摩擦（0〜1） */
+  friction: number;
+}
+
+export const DEFAULT_SOFTBODY: SoftBodyParams = {
+  gravity: 10,
+  substeps: 2,
+  edgeCompliance: 0.009,
+  volumeCompliance: 0.0025,
+  shapeStiffness: 0.5,
+  hopStiffness: 0.5,
+  proneStiffness: 0.5,
+  supineStiffness: 0.5,
+  upright: 0.06,
+  damping: 5,
+  bounce: 0.1,
+  friction: 0.67,
+};
+
+export class SoftBody {
+  readonly n: number;
+  readonly pos: Float32Array;
+  readonly prev: Float32Array;
+  readonly vel: Float32Array;
+  /** 静止形状（重心を原点とする） */
+  readonly rest: Float32Array;
+  readonly invMass: Float32Array;
+  readonly tris: Uint32Array;
+  readonly edges: Uint32Array;
+  readonly edgeLen: Float32Array;
+  /** 体の伸縮（actuation）を反映した、今の辺の目標長さ */
+  private readonly edgeTarget: Float32Array;
+
+  /** シェイプマッチングの結果：現在の回転と重心 */
+  readonly rotation = new Quaternion();
+  readonly center = new Vector3();
+
+  /** 目標体積の倍率（呼吸・膨らみ等の外部入力） */
+  volumeScale = 1;
+  restVolume = 0;
+  /** 渡された静止形状の重心（rest はこれを引いた座標） */
+  readonly restCentroid = new Vector3();
+  /** 直近ステップで地面に触れていた頂点の数 */
+  groundContacts = 0;
+
+  /**
+   * 体の「筋肉」による入力。シェイプマッチングの目標形状を変えることで体を動かす。
+   * （外から押すのではなく、自分の形を変える）
+   */
+  readonly actuation = {
+    /** 縦方向の伸縮（1 = 静止形状、<1 で縮む）。横は体積が保たれるよう自動で広がる */
+    squash: 1,
+    /** 前後方向の伸び（1 = そのまま、>1 で前後に伸びて左右が細る） */
+    stretch: 1,
+    /**
+     * 上部（頭）を前へ曲げる量。底は動かさず、上にいくほど前にずれて少し下がる
+     * （体全体を回す lean と違い、底は地面に付いたまま）。値は体の高さに対する頭頂の前方移動の比
+     */
+    bend: 0,
+    /**
+     * 横への曲げ（rad）。体の前後の軸（背骨）を弧状に曲げ、各断面を背骨の向きに合わせて回す。
+     * 尻尾側はまっすぐのまま胴の中ほどで曲がり、頭の部分は丸ごとこの角度だけ横（+ でローカル +X 側）を向く。
+     * ずらすのではなく回すので、顔（両目）がそろって新しい向きを向く。0 でまっすぐ
+     */
+    sideBend: 0,
+    /** 前方への傾き (rad)。前方は体のローカル +Z */
+    lean: 0,
+    /** 向きたい方向 (rad, Y軸まわり)。null なら今の向きを保つ */
+    yaw: null as number | null,
+    /** 前方にだけ滑りやすくする底の摩擦（null で通常の摩擦） */
+    slideFriction: null as number | null,
+    /**
+     * 底の踏ん張り（尺取り虫の動き）。'front' は重心より前の底を、'rear' は後ろの底を地面に固定し、
+     * 反対側の底は前にだけ滑らせる。null で通常の摩擦
+     */
+    anchor: null as 'front' | 'rear' | null,
+    /**
+     * 伸縮の支点。'rear' なら後端、'front' なら前端を、指定した瞬間の位置に留めたまま形を変える
+     * （重心まわりではなく端を支点に伸び縮みする）。null で重心まわり
+     */
+    pivot: null as 'front' | 'rear' | null,
+    /** 姿勢を保つ強さの下限（一時的に踏ん張って姿勢を保つとき。null で通常） */
+    uprightMin: null as number | null,
+    /** 形に戻る強さをどの状況の値にするか */
+    stiffnessMode: 'normal' as 'normal' | 'hop' | 'prone' | 'supine',
+    /** 目標の姿勢（回転）。指定すると yaw・lean の代わりにこの姿勢へ近づける（横になる・転がる等） */
+    orientation: null as Quaternion | null,
+  };
+  private pivotSide: 'front' | 'rear' | null = null;
+  /** 支点の地面上の位置（ワールド x, z） */
+  private pivotX = 0;
+  private pivotZ = 0;
+  /** 静止形状の前後方向の範囲（ローカル z） */
+  private restYMin = 0;
+  private restYMax = 0;
+  /** actuation を反映した目標形状（ローカル、重心が原点）とその前後の範囲 */
+  private readonly goalLocal: Float32Array;
+  private goalZMin = 0;
+  private goalZMax = 0;
+  /** 目標形状の前端・後端の点（ローカル、重心が原点） */
+  private readonly goalFront = new Vector3();
+  private readonly goalRear = new Vector3();
+  /** 前端・後端の点として使う頂点（静止形状で最も前・最も後ろの頂点） */
+  private frontIdx = 0;
+  private rearIdx = 0;
+  /** 背骨の弧の表（横への曲げに使う） */
+  private readonly spineX = new Float32Array(SPINE_SAMPLES + 1);
+  private readonly spineZ = new Float32Array(SPINE_SAMPLES + 1);
+  private readonly spineA = new Float32Array(SPINE_SAMPLES + 1);
+
+  private readonly grads: Float32Array;
+  /** 直近の部分ステップでシェイプマッチングが各頂点を動かした量 */
+  private readonly smDelta: Float32Array;
+  // 作業用
+  private readonly _a0 = new Vector3();
+  private readonly _a1 = new Vector3();
+  private readonly _a2 = new Vector3();
+  private readonly _r0 = new Vector3();
+  private readonly _r1 = new Vector3();
+  private readonly _r2 = new Vector3();
+  private readonly _t = new Vector3();
+  private readonly _dq = new Quaternion();
+  private readonly _twist = new Quaternion();
+  private readonly _tilt = new Quaternion();
+  private static readonly X_AXIS = new Vector3(1, 0, 0);
+
+  constructor(restPositions: Float32Array, triangles: Uint32Array, totalMass = 1) {
+    this.n = restPositions.length / 3;
+    this.tris = triangles;
+    this.pos = new Float32Array(restPositions);
+    this.prev = new Float32Array(restPositions);
+    this.vel = new Float32Array(restPositions.length);
+    this.rest = new Float32Array(restPositions.length);
+    this.grads = new Float32Array(restPositions.length);
+    this.smDelta = new Float32Array(restPositions.length);
+    this.invMass = new Float32Array(this.n).fill(this.n / totalMass);
+
+    // 三角形から重複のない辺を作る
+    const seen = new Set<number>();
+    const edges: number[] = [];
+    for (let t = 0; t < triangles.length; t += 3) {
+      for (let e = 0; e < 3; e++) {
+        const a = triangles[t + e];
+        const b = triangles[t + ((e + 1) % 3)];
+        const key = Math.min(a, b) * this.n + Math.max(a, b);
+        if (!seen.has(key)) {
+          seen.add(key);
+          edges.push(a, b);
+        }
+      }
+    }
+    this.edges = new Uint32Array(edges);
+    this.edgeLen = new Float32Array(edges.length / 2);
+    this.edgeTarget = new Float32Array(edges.length / 2);
+    this.goalLocal = new Float32Array(restPositions.length);
+    this.setRestShape(restPositions);
+  }
+
+  /** 静止形状を差し替える（現在の位置は保つ） */
+  setRestShape(restPositions: Float32Array): void {
+    const c = centroid(restPositions, this.restCentroid);
+    for (let i = 0; i < this.n * 3; i += 3) {
+      this.rest[i] = restPositions[i] - c.x;
+      this.rest[i + 1] = restPositions[i + 1] - c.y;
+      this.rest[i + 2] = restPositions[i + 2] - c.z;
+    }
+    for (let e = 0; e < this.edgeLen.length; e++) {
+      this.edgeLen[e] = dist(this.rest, this.edges[2 * e], this.edges[2 * e + 1]);
+    }
+    this.restVolume = this.volume(this.rest);
+    let zLo = Infinity, zHi = -Infinity;
+    for (let i = 0; i < this.n; i++) {
+      const z = this.rest[3 * i + 2];
+      if (z < zLo) { zLo = z; this.rearIdx = i; }
+      if (z > zHi) { zHi = z; this.frontIdx = i; }
+    }
+    this.restYMin = Infinity;
+    this.restYMax = -Infinity;
+    for (let i = 1; i < this.rest.length; i += 3) {
+      this.restYMin = Math.min(this.restYMin, this.rest[i]);
+      this.restYMax = Math.max(this.restYMax, this.rest[i]);
+    }
+    this.updateActuatedShape();
+  }
+
+  /** 静止形状のまま指定位置に置き直す（重心が (x,y,z) に来る） */
+  reset(x: number, y: number, z: number): void {
+    for (let i = 0; i < this.n * 3; i += 3) {
+      this.pos[i] = this.rest[i] + x;
+      this.pos[i + 1] = this.rest[i + 1] + y;
+      this.pos[i + 2] = this.rest[i + 2] + z;
+    }
+    this.prev.set(this.pos);
+    this.vel.fill(0);
+    this.rotation.identity();
+    this.center.set(x, y, z);
+  }
+
+  /** 全体の平均速度 */
+  meanVelocity(out: Vector3): Vector3 {
+    out.set(0, 0, 0);
+    for (let i = 0; i < this.n * 3; i += 3) {
+      out.x += this.vel[i]; out.y += this.vel[i + 1]; out.z += this.vel[i + 2];
+    }
+    return out.divideScalar(this.n);
+  }
+
+  /** 全体に速度を加える */
+  addVelocity(vx: number, vy: number, vz: number): void {
+    for (let i = 0; i < this.n * 3; i += 3) {
+      this.vel[i] += vx;
+      this.vel[i + 1] += vy;
+      this.vel[i + 2] += vz;
+    }
+  }
+
+  /** 点 (px,py,pz) の周囲 radius 以内の頂点に、距離で減衰する速度を加える */
+  addLocalVelocity(px: number, py: number, pz: number, radius: number, vx: number, vy: number, vz: number): void {
+    const r2 = radius * radius;
+    for (let i = 0; i < this.n; i++) {
+      const dx = this.pos[3 * i] - px, dy = this.pos[3 * i + 1] - py, dz = this.pos[3 * i + 2] - pz;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 >= r2) continue;
+      const f = 1 - Math.sqrt(d2) / radius;
+      const w = f * f;
+      this.vel[3 * i] += vx * w;
+      this.vel[3 * i + 1] += vy * w;
+      this.vel[3 * i + 2] += vz * w;
+    }
+  }
+
+  step(dt: number, p: SoftBodyParams): void {
+    const sub = Math.max(1, Math.round(p.substeps));
+    const h = dt / sub;
+    // 1/60 秒あたりの値を部分ステップあたりに換算
+    const mode = this.actuation.stiffnessMode;
+    const stiffness =
+      mode === 'hop' ? p.hopStiffness
+        : mode === 'prone' ? p.proneStiffness
+          : mode === 'supine' ? p.supineStiffness
+            : p.shapeStiffness;
+    const shapeK = 1 - Math.pow(1 - stiffness, dt * 60 / sub);
+    const upright = Math.max(p.upright, this.actuation.uprightMin ?? 0);
+    const uprightK = 1 - Math.pow(1 - upright, dt * 60 / sub);
+    const damp = Math.max(0, 1 - p.damping * h);
+    const { pos, prev, vel, invMass, n } = this;
+    this.updateActuatedShape();
+
+    for (let s = 0; s < sub; s++) {
+      for (let i = 0; i < n; i++) {
+        if (invMass[i] === 0) continue;
+        const k = 3 * i;
+        vel[k + 1] -= p.gravity * h;
+        prev[k] = pos[k]; prev[k + 1] = pos[k + 1]; prev[k + 2] = pos[k + 2];
+        pos[k] += vel[k] * h;
+        pos[k + 1] += vel[k + 1] * h;
+        pos[k + 2] += vel[k + 2] * h;
+      }
+
+      this.solveEdges(p.edgeCompliance / (h * h));
+      this.solveVolume(p.volumeCompliance / (h * h));
+      this.solveShapeMatching(shapeK, uprightK);
+      this.solveGround(p.friction);
+
+      // 速度を更新する。元の形に戻る動き（シェイプマッチングの補正）は、
+      // 弾みの割合だけを速度に残す（残りは位置だけを戻し、跳ね返りの勢いにしない）
+      const sm = this.smDelta;
+      const keep = (1 - Math.min(Math.max(p.bounce, 0), 1)) / h;
+      let mx = 0, my = 0, mz = 0;
+      for (let i = 0; i < n * 3; i += 3) {
+        vel[i] = (pos[i] - prev[i]) / h - sm[i] * keep;
+        vel[i + 1] = (pos[i + 1] - prev[i + 1]) / h - sm[i + 1] * keep;
+        vel[i + 2] = (pos[i + 2] - prev[i + 2]) / h - sm[i + 2] * keep;
+        mx += vel[i]; my += vel[i + 1]; mz += vel[i + 2];
+      }
+      // 全体の平均速度からのずれ（揺れ）だけを減衰させる
+      mx /= n; my /= n; mz /= n;
+      for (let i = 0; i < n * 3; i += 3) {
+        vel[i] = mx + (vel[i] - mx) * damp;
+        vel[i + 1] = my + (vel[i + 1] - my) * damp;
+        vel[i + 2] = mz + (vel[i + 2] - mz) * damp;
+      }
+    }
+  }
+
+  /**
+   * actuation（伸縮・曲げ）を反映した目標形状を作る。
+   * 皮の基準の長さも同じ形から求める（体を変形させている間に皮が突っ張ってしわになるのを防ぐ）
+   */
+  private updateActuatedShape(): void {
+    const act = this.actuation;
+    const { rest, edges, edgeLen, edgeTarget, goalLocal: g, n } = this;
+    const sy = act.squash;
+    const sxz = 1 / Math.sqrt(Math.max(sy, 0.2));
+    const st = Math.max(act.stretch, 0.2);
+    const sx = sxz / st, sz = sxz * st;
+    const y0 = this.restYMin;
+    const H = Math.max(this.restYMax - y0, 1e-6);
+    const bend = act.bend;
+    const side = act.sideBend;
+
+    let gzMin = Infinity, gzMax = -Infinity;
+    for (let i = 0; i < n * 3; i += 3) {
+      const t = (rest[i + 1] - y0) / H; // 0(底)〜1(頭頂)
+      const t2 = t * t;
+      g[i] = rest[i] * sx;
+      g[i + 1] = rest[i + 1] * sy - bend * 0.45 * H * sy * t2;
+      g[i + 2] = rest[i + 2] * sz + bend * H * t2;
+      gzMin = Math.min(gzMin, g[i + 2]);
+      gzMax = Math.max(gzMax, g[i + 2]);
+    }
+
+    // 横への曲げ：背骨（前後の軸）を弧にして、各断面を背骨の向きに合わせて回す
+    if (Math.abs(side) > 1e-5) {
+      const D = Math.max(gzMax - gzMin, 1e-6);
+      const N = SPINE_SAMPLES;
+      const sx_ = this.spineX, sz_ = this.spineZ, sa = this.spineA;
+      sx_[0] = 0; sz_[0] = gzMin; sa[0] = 0;
+      for (let j = 1; j <= N; j++) {
+        // 尻尾側（後ろ 15%）はまっすぐ、胴の中ほどで曲がり、頭（前 30%）は丸ごと side だけ回る
+        sa[j] = side * smoothstep(0.15, 0.7, j / N);
+        const am = (sa[j - 1] + sa[j]) * 0.5;
+        sx_[j] = sx_[j - 1] + (D / N) * Math.sin(am);
+        sz_[j] = sz_[j - 1] + (D / N) * Math.cos(am);
+      }
+      for (let i = 0; i < n * 3; i += 3) {
+        const f = ((g[i + 2] - gzMin) / D) * N;
+        const j = Math.min(Math.max(Math.floor(f), 0), N - 1);
+        const w = f - j;
+        const px = sx_[j] + (sx_[j + 1] - sx_[j]) * w;
+        const pz = sz_[j] + (sz_[j + 1] - sz_[j]) * w;
+        const a = sa[j] + (sa[j + 1] - sa[j]) * w;
+        // 背骨上の点から、背骨に直交する横方向へ元の横位置だけ離す
+        const lx = g[i];
+        g[i] = px + lx * Math.cos(a);
+        g[i + 2] = pz - lx * Math.sin(a);
+      }
+    }
+
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < n * 3; i += 3) {
+      cx += g[i]; cy += g[i + 1]; cz += g[i + 2];
+    }
+    // 重心を原点に戻す（曲げで重心がずれた分を全体の移動に変えない）
+    cx /= n; cy /= n; cz /= n;
+    let zMin = Infinity, zMax = -Infinity;
+    for (let i = 0; i < n * 3; i += 3) {
+      g[i] -= cx; g[i + 1] -= cy; g[i + 2] -= cz;
+      zMin = Math.min(zMin, g[i + 2]);
+      zMax = Math.max(zMax, g[i + 2]);
+    }
+    this.goalZMin = zMin;
+    this.goalZMax = zMax;
+    // 前端・後端の点は決まった頂点で追う（曲げても同じ部位を支点にできる）
+    const fi = 3 * this.frontIdx, ri = 3 * this.rearIdx;
+    this.goalFront.set(g[fi], g[fi + 1], g[fi + 2]);
+    this.goalRear.set(g[ri], g[ri + 1], g[ri + 2]);
+
+    const identity = Math.abs(sy - 1) + Math.abs(st - 1) + Math.abs(bend) + Math.abs(side) < 1e-4;
+    if (identity) {
+      edgeTarget.set(edgeLen);
+      return;
+    }
+    for (let e = 0; e < edgeLen.length; e++) {
+      const a = 3 * edges[2 * e], b = 3 * edges[2 * e + 1];
+      const dx = g[a] - g[b], dy = g[a + 1] - g[b + 1], dz = g[a + 2] - g[b + 2];
+      edgeTarget[e] = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+  }
+
+  private solveEdges(alpha: number): void {
+    const { pos, invMass, edges, edgeTarget: edgeLen } = this;
+    for (let e = 0; e < edgeLen.length; e++) {
+      const a = edges[2 * e], b = edges[2 * e + 1];
+      const wa = invMass[a], wb = invMass[b];
+      const w = wa + wb;
+      if (w === 0) continue;
+      const dx = pos[3 * a] - pos[3 * b];
+      const dy = pos[3 * a + 1] - pos[3 * b + 1];
+      const dz = pos[3 * a + 2] - pos[3 * b + 2];
+      const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (len < 1e-9) continue;
+      const C = len - edgeLen[e];
+      const s = -C / (w + alpha) / len;
+      pos[3 * a] += dx * s * wa; pos[3 * a + 1] += dy * s * wa; pos[3 * a + 2] += dz * s * wa;
+      pos[3 * b] -= dx * s * wb; pos[3 * b + 1] -= dy * s * wb; pos[3 * b + 2] -= dz * s * wb;
+    }
+  }
+
+  private solveVolume(alpha: number): void {
+    const { pos, tris, grads, invMass, n } = this;
+    grads.fill(0);
+    let vol = 0;
+    for (let t = 0; t < tris.length; t += 3) {
+      const i0 = 3 * tris[t], i1 = 3 * tris[t + 1], i2 = 3 * tris[t + 2];
+      const x0 = pos[i0], y0 = pos[i0 + 1], z0 = pos[i0 + 2];
+      const x1 = pos[i1], y1 = pos[i1 + 1], z1 = pos[i1 + 2];
+      const x2 = pos[i2], y2 = pos[i2 + 1], z2 = pos[i2 + 2];
+      // cross(p1,p2), cross(p2,p0), cross(p0,p1) がそれぞれ p0,p1,p2 の勾配（×1/6）
+      const c12x = y1 * z2 - z1 * y2, c12y = z1 * x2 - x1 * z2, c12z = x1 * y2 - y1 * x2;
+      const c20x = y2 * z0 - z2 * y0, c20y = z2 * x0 - x2 * z0, c20z = x2 * y0 - y2 * x0;
+      const c01x = y0 * z1 - z0 * y1, c01y = z0 * x1 - x0 * z1, c01z = x0 * y1 - y0 * x1;
+      vol += x0 * c12x + y0 * c12y + z0 * c12z;
+      grads[i0] += c12x; grads[i0 + 1] += c12y; grads[i0 + 2] += c12z;
+      grads[i1] += c20x; grads[i1 + 1] += c20y; grads[i1 + 2] += c20z;
+      grads[i2] += c01x; grads[i2 + 1] += c01y; grads[i2 + 2] += c01z;
+    }
+    vol /= 6;
+    let wsum = 0;
+    for (let i = 0; i < n; i++) {
+      const k = 3 * i;
+      const g2 = (grads[k] * grads[k] + grads[k + 1] * grads[k + 1] + grads[k + 2] * grads[k + 2]) / 36;
+      wsum += invMass[i] * g2;
+    }
+    if (wsum === 0) return;
+    const C = vol - this.restVolume * this.volumeScale;
+    const lambda = -C / (wsum + alpha) / 6;
+    for (let i = 0; i < n; i++) {
+      const w = invMass[i] * lambda;
+      const k = 3 * i;
+      pos[k] += grads[k] * w; pos[k + 1] += grads[k + 1] * w; pos[k + 2] += grads[k + 2] * w;
+    }
+  }
+
+  /** Müller et al. 2005 のシェイプマッチング。回転は反復法の極分解（2016）で求める */
+  private solveShapeMatching(k: number, uprightK: number): void {
+    const { pos, rest, n } = this;
+    const c = centroid(pos, this.center);
+
+    // A = Σ (x - c) q^T を列ベクトル a0,a1,a2 として持つ
+    const a0 = this._a0.set(0, 0, 0), a1 = this._a1.set(0, 0, 0), a2 = this._a2.set(0, 0, 0);
+    for (let i = 0; i < n * 3; i += 3) {
+      const px = pos[i] - c.x, py = pos[i + 1] - c.y, pz = pos[i + 2] - c.z;
+      const qx = rest[i], qy = rest[i + 1], qz = rest[i + 2];
+      a0.x += px * qx; a0.y += py * qx; a0.z += pz * qx;
+      a1.x += px * qy; a1.y += py * qy; a1.z += pz * qy;
+      a2.x += px * qz; a2.y += py * qz; a2.z += pz * qz;
+    }
+
+    const q = this.rotation;
+    const r0 = this._r0, r1 = this._r1, r2 = this._r2, w = this._t;
+    for (let it = 0; it < 8; it++) {
+      r0.set(1, 0, 0).applyQuaternion(q);
+      r1.set(0, 1, 0).applyQuaternion(q);
+      r2.set(0, 0, 1).applyQuaternion(q);
+      const denom = Math.abs(r0.dot(a0) + r1.dot(a1) + r2.dot(a2)) + 1e-9;
+      w.crossVectors(r0, a0);
+      const wx = w.x, wy = w.y, wz = w.z;
+      w.crossVectors(r1, a1);
+      const ux = w.x, uy = w.y, uz = w.z;
+      w.crossVectors(r2, a2);
+      w.set((wx + ux + w.x) / denom, (wy + uy + w.y) / denom, (wz + uz + w.z) / denom);
+      const angle = w.length();
+      if (angle < 1e-9) break;
+      this._dq.setFromAxisAngle(w.divideScalar(angle), angle);
+      q.premultiply(this._dq).normalize();
+    }
+
+    if (k <= 0) {
+      this.smDelta.fill(0);
+      return;
+    }
+    // 目標の回転：現在の回転を「望む姿勢（向き＋前傾、または指定の姿勢）」へ uprightK だけ近づける
+    const act = this.actuation;
+    const goal = this._dq.copy(q);
+    if (uprightK > 0) {
+      if (act.orientation) {
+        this._twist.copy(act.orientation);
+      } else {
+        const yaw = act.yaw ?? this.yaw;
+        this._twist.set(0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2));
+        this._tilt.setFromAxisAngle(SoftBody.X_AXIS, act.lean);
+        this._twist.multiply(this._tilt);
+      }
+      if (goal.dot(this._twist) < 0) this._twist.set(-this._twist.x, -this._twist.y, -this._twist.z, -this._twist.w);
+      goal.slerp(this._twist, uprightK);
+    }
+    // 目標形状（actuation を反映済みのローカル形状）を目標の回転で置く
+    const gl = this.goalLocal;
+    r0.set(1, 0, 0).applyQuaternion(goal);
+    r1.set(0, 1, 0).applyQuaternion(goal);
+    r2.set(0, 0, 1).applyQuaternion(goal);
+
+    // 端を支点にする場合：目標形状をずらして、支点側の端（前端／後端の点）を地面上の固定位置に合わせる。
+    // 前後だけでなく左右も合わせるので、体の向きが変わると固定した端を中心に体が回る
+    // （縮む段階で頭の端を中心に向きを変え、後部が弧を描いて頭の後ろに並ぶ）
+    let ox = 0, oz = 0;
+    const tip = (side: 'front' | 'rear') => (side === 'rear' ? this.goalRear : this.goalFront);
+    const tipX = (t: Vector3) => c.x + r0.x * t.x + r1.x * t.y + r2.x * t.z;
+    const tipZ = (t: Vector3) => c.z + r0.z * t.x + r1.z * t.y + r2.z * t.z;
+    if (act.pivot !== this.pivotSide) {
+      this.pivotSide = act.pivot;
+      if (act.pivot !== null) {
+        this.pivotX = tipX(tip(act.pivot));
+        this.pivotZ = tipZ(tip(act.pivot));
+      }
+    }
+    if (this.pivotSide !== null) {
+      // 送る量には上限を設ける（何かの拍子に体が弾き飛ばされないように）
+      const t = tip(this.pivotSide);
+      let dx = this.pivotX - tipX(t), dz = this.pivotZ - tipZ(t);
+      const maxShift = (this.goalZMax - this.goalZMin) * 0.25;
+      const len = Math.hypot(dx, dz);
+      if (len > maxShift) {
+        dx *= maxShift / len;
+        dz *= maxShift / len;
+      }
+      ox = dx;
+      oz = dz;
+    }
+    for (let i = 0; i < n; i++) {
+      if (this.invMass[i] === 0) continue;
+      const j = 3 * i;
+      const qx = gl[j], qy = gl[j + 1], qz = gl[j + 2];
+      const gx = c.x + ox + r0.x * qx + r1.x * qy + r2.x * qz;
+      const gy = c.y + r0.y * qx + r1.y * qy + r2.y * qz;
+      const gz = c.z + oz + r0.z * qx + r1.z * qy + r2.z * qz;
+      const dx = (gx - pos[j]) * k, dy = (gy - pos[j + 1]) * k, dz = (gz - pos[j + 2]) * k;
+      pos[j] += dx;
+      pos[j + 1] += dy;
+      pos[j + 2] += dz;
+      // 端を支点にした送り（ox, oz）は這うための推進なので、弾みの対象から外す
+      this.smDelta[j] = dx - ox * k;
+      this.smDelta[j + 1] = dy;
+      this.smDelta[j + 2] = dz - oz * k;
+    }
+  }
+
+  private solveGround(friction: number): void {
+    const { pos, prev, n } = this;
+    const slide = this.actuation.slideFriction;
+    const anchor = this.actuation.anchor;
+    const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+    const c = this.center;
+    let contacts = 0;
+    for (let i = 0; i < n; i++) {
+      const k = 3 * i;
+      if (pos[k + 1] >= 0) continue;
+      pos[k + 1] = 0;
+      // 接地中は水平方向の移動を摩擦で減らす
+      const dx = pos[k] - prev[k], dz = pos[k + 2] - prev[k + 2];
+      if (anchor !== null) {
+        // 踏ん張る側は地面にほぼ固定、反対側は前にだけ滑る
+        const s = (pos[k] - c.x) * fx + (pos[k + 2] - c.z) * fz;
+        const planted = anchor === 'front' ? s > 0 : s < 0;
+        if (planted) {
+          // 踏ん張る側は前後方向の滑りだけを止める。横方向は通常の摩擦にして、
+          // 這いながら向きを変えても固定した端を中心に体が振り回されないようにする
+          const along = dx * fx + dz * fz;
+          const sx = dx - fx * along, sz = dz - fz * along;
+          pos[k] -= fx * along * 0.98 + sx * friction;
+          pos[k + 2] -= fz * along * 0.98 + sz * friction;
+        } else {
+          const fwd = Math.max(dx * fx + dz * fz, 0);
+          const ox = dx - fx * fwd, oz = dz - fz * fwd;
+          pos[k] -= ox * friction + fx * fwd * 0.03;
+          pos[k + 2] -= oz * friction + fz * fwd * 0.03;
+        }
+      } else if (slide === null) {
+        pos[k] -= dx * friction;
+        pos[k + 2] -= dz * friction;
+      } else {
+        // 前向きの成分だけ摩擦を弱くする（這うときの底の使い方）
+        const along = dx * fx + dz * fz;
+        const fwd = Math.max(along, 0);
+        const ox = dx - fx * fwd, oz = dz - fz * fwd;
+        pos[k] -= ox * friction + fx * fwd * slide;
+        pos[k + 2] -= oz * friction + fz * fwd * slide;
+      }
+      contacts++;
+    }
+    this.groundContacts = contacts;
+  }
+
+  /** 今の向き (rad, Y軸まわり。ローカル +Z が前) */
+  get yaw(): number {
+    const q = this.rotation;
+    return 2 * Math.atan2(q.y, q.w);
+  }
+
+  volume(p: Float32Array = this.pos): number {
+    const t = this.tris;
+    let v = 0;
+    for (let i = 0; i < t.length; i += 3) {
+      const a = 3 * t[i], b = 3 * t[i + 1], c = 3 * t[i + 2];
+      v += p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1])
+        + p[a + 1] * (p[b + 2] * p[c] - p[b] * p[c + 2])
+        + p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c]);
+    }
+    return v / 6;
+  }
+}
+
+/** 背骨の弧を表す点の数 */
+const SPINE_SAMPLES = 48;
+
+function smoothstep(a: number, b: number, x: number): number {
+  const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
+  return t * t * (3 - 2 * t);
+}
+
+function centroid(p: Float32Array, out: Vector3): Vector3 {
+  out.set(0, 0, 0);
+  const n = p.length / 3;
+  for (let i = 0; i < p.length; i += 3) {
+    out.x += p[i]; out.y += p[i + 1]; out.z += p[i + 2];
+  }
+  return out.divideScalar(n);
+}
+
+function dist(p: Float32Array, a: number, b: number): number {
+  const dx = p[3 * a] - p[3 * b], dy = p[3 * a + 1] - p[3 * b + 1], dz = p[3 * a + 2] - p[3 * b + 2];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}

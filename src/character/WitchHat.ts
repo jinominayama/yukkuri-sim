@@ -1,0 +1,828 @@
+import * as THREE from 'three';
+import { createAccessoryMaterial } from '../render/accessoryMaterial';
+import type { ToonColors } from '../render/toonMaterial';
+import { GROUND_CROWN } from '../render/ground';
+import { readVertex } from './FaceIndex';
+import { bowGeometries, lathe, tubeAlong, withOutline } from './shapes';
+import type { Accessory, AttachContext, OutfitParams } from './types';
+
+export interface WitchHatStyle {
+  /** 帽子の布（黒） */
+  cloth: ToonColors;
+  /** 帯・リボン・フリル（白） */
+  trim: ToonColors;
+  /** つばの外側の半径（かぶる所の半径に対する比） */
+  brim: number;
+  /** 円錐の高さ（同上） */
+  height: number;
+  /** 先の折れ曲がる向き（度。0 で真後ろ、+ で右後ろ） */
+  bendAngle: number;
+  /** 正面のリボンの位置（度。0 で正面、+ で右） */
+  bowAngle: number;
+  /** つばの下のフリル */
+  frill: boolean;
+}
+
+/**
+ * 魔女帽子：広いつば、先の折れた円錐、白い帯と大きなリボン、つばの下のフリル。
+ * 頭のまわりの4点（前・後ろ・左・右）から向きと位置を決めて載せるので、
+ * 体が傾く・つぶれる・寝転がるとそれについていく。
+ *
+ * 帽子の形は「かぶる所の半径 = 1」で作り、体型ごとに大きさを合わせる
+ */
+export class WitchHat implements Accessory {
+  readonly object = new THREE.Group();
+  private readonly hat = new THREE.Group();
+  private anchors = [0, 0, 0, 0]; // 前・右・後ろ・左
+  private readonly restInv = new THREE.Matrix4();
+  private readonly local = new THREE.Matrix4();
+  private restWidth = 1;
+  private readonly materials: THREE.Material[] = [];
+  private readonly geometries: THREE.BufferGeometry[] = [];
+  private frill: Frill | null = null;
+  /** 円錐と帯（頭を避けて太らせる） */
+  private readonly crownParts: Swell[] = [];
+  private readonly bow = new THREE.Group();
+  private readonly bowDir = new THREE.Vector3();
+  /** リボンの頂点を円錐の表面に追従させる（円錐が太る・折れるとき） */
+  private bowFollow: Follow[] = [];
+  /** つばの上面の高さ（中心からの距離 → 帽子の座標の y）と、つばの外周の半径 */
+  private brimTop: (r: number) => number = () => 0;
+  private brimR = 1;
+  /** つば（寝転がって折れているときは頭の外へ押し出す） */
+  private brimGeometry: THREE.BufferGeometry | null = null;
+  private brimBase = new Float32Array(0);
+  private crownPush: Float32Array = new Float32Array(CROWN_N + 1);
+  /** 太らせる量が変わって、円錐を置き直す必要がある */
+  private crownDirty = true;
+  /** 前のフレームで円錐を地面で折り曲げていた */
+  private folded = false;
+  /** 当たり判定に使う体の頂点（帽子のまわりにあるもの） */
+  private near = new Int32Array(0);
+  private local3 = new Float32Array(0);
+  /** local3 の各点の法線（帽子の座標） */
+  private localN = new Float32Array(0);
+
+  constructor(ctx: AttachContext, private readonly style: WitchHatStyle, private readonly params: OutfitParams) {
+    this.object.add(this.hat);
+    this.object.matrixAutoUpdate = false;
+    this.build(ctx);
+  }
+
+  /** 形を作る（かぶる所の半径 1） */
+  private build(ctx: AttachContext): void {
+    const st = this.style;
+    const clothBoth = createAccessoryMaterial(ctx.bodyMaterial, st.cloth, { rim: 0.35, doubleSide: true });
+    // 円錐と帯：寝転がって地面に押し付けられたとき、髪より上・つばより下の高さで止める
+    // （同じ高さだと重なってちらつく）。帯は押しつぶされて面が裏返っても縞にならないよう両面
+    const trim = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { doubleSide: true, ground: GROUND_CROWN });
+    const crownCloth = createAccessoryMaterial(ctx.bodyMaterial, st.cloth, { rim: 0.35, doubleSide: true, ground: GROUND_CROWN });
+    this.materials.push(crownCloth);
+    const trimBoth = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { doubleSide: true });
+    this.materials.push(clothBoth, trim, trimBoth);
+    const ol = ctx.outlineMaterial;
+    const add = (g: THREE.BufferGeometry, m: THREE.Material, outline = true) => {
+      this.geometries.push(g);
+      this.hat.add(withOutline(g, m, outline ? ol : null));
+    };
+
+    // つば：内側はわずかに上がり、外へ向かってなだらかに垂れる。外周は少し波打つ
+    const B = st.brim;
+    this.brimTop = brimTopAt(B);
+    this.brimR = B;
+    const brim = lathe([
+      [0.8, 0.02], [1.15, 0.035], [B * 0.8, 0.0], [B * 0.97, -0.09], [B, -0.12],
+      [B * 0.985, -0.135], [B * 0.8, -0.03], [1.15, 0.0], [0.8, -0.01],
+    ], 128, true);
+    waveRim(brim, B * 0.75, 6, 0.035);
+    add(brim, clothBoth);
+    this.brimBase = Float32Array.from(brim.getAttribute('position').array as Float32Array);
+    this.brimGeometry = brim;
+
+    // 円錐：先は後ろ（bendAngle の向き）へ折れて垂れる
+    const curve = this.crownCurve();
+    const tube = tubeAlong(curve, crownBase, 56, 56);
+    // 内側も布の色で描く（寝転がって折れ曲がると、口の内側が見えることがある）
+    add(tube, crownCloth);
+    this.crownParts.push(new Swell(tube, 56, 57, (i) => i / 56, curve, 1));
+
+    // 帯（白）：円錐の根元
+    const bandT = (i: number) => 0.02 + (i / 6) * 0.1;
+    const band = tubeAlong((t) => curve(0.02 + t * 0.1), (t, a) => crownBase(0.02 + t * 0.1, a) * 1.035, 6, 56);
+    add(band, trim);
+    this.crownParts.push(new Swell(band, 6, 57, bandT, curve, 1.035));
+
+    // 正面のリボン：帯の上、円錐の表面から外へ
+    const bowA = (st.bowAngle * Math.PI) / 180;
+    this.bowDir.set(Math.sin(bowA), 0, Math.cos(bowA));
+    // 円錐の表面に沿わせる（羽の先は円錐の丸みに沿って奥へ）
+    // 垂れはなし（羽と結び目だけ）
+    const BOW = 0.82;
+    for (const g of bowGeometries(BOW, { tail: 0, wrap: crownBase(0.08, 0), lift: 0.12 })) {
+      this.geometries.push(g);
+      this.bow.add(withOutline(g, trimBoth, ol));
+    }
+    // 結び目は帯の上。円錐の傾きに合わせて上を奥へ倒す
+    const at = curve(0.07).addScaledVector(this.bowDir, crownBase(0.07, 0) * 1.04).add(new THREE.Vector3(0, BOW_RAISE, 0));
+    this.bow.position.copy(at);
+    this.bow.lookAt(at.clone().add(this.bowDir));
+    this.bow.rotateX(-0.12);
+    this.bow.rotateZ(-0.08);
+    // 形を帽子の座標に焼き込み、つばの上面より下に入る所はつばの上に載せる
+    // （羽は結び目より下へ広がるので、下の角がつばに当たる）
+    this.bow.updateMatrix();
+    const brimTop = brimTopAt(B);
+    const baked = new Set<THREE.BufferGeometry>();
+    this.bow.traverse((o) => {
+      if (!(o instanceof THREE.Mesh) || baked.has(o.geometry)) return;
+      const g = o.geometry as THREE.BufferGeometry;
+      baked.add(g);
+      g.applyMatrix4(this.bow.matrix);
+      const p = g.getAttribute('position') as THREE.BufferAttribute;
+      for (let i = 0; i < p.count; i++) {
+        const floor = brimTop(Math.hypot(p.getX(i), p.getZ(i))) + BRIM_CLEAR;
+        if (p.getY(i) < floor) p.setY(i, floor);
+      }
+      g.computeVertexNormals();
+      g.computeBoundingSphere();
+    });
+    this.bow.position.set(0, 0, 0);
+    this.bow.quaternion.identity();
+    this.bowFollow = [...baked].map((g) => new Follow(g, this.crownParts[0]));
+    this.hat.add(this.bow);
+
+    // つばの下のフリル：頭のまわりに垂れる波打った布
+    if (st.frill) {
+      this.frill = new Frill();
+      add(this.frill.geometry, trimBoth, false);
+    }
+  }
+
+  /** 円錐の中心線（t = 0 が根元） */
+  private crownCurve(): (t: number) => THREE.Vector3 {
+    const st = this.style;
+    const ba = (st.bendAngle * Math.PI) / 180;
+    const back = new THREE.Vector3(Math.sin(ba), 0, -Math.cos(ba));
+    const H = st.height;
+    const p0 = new THREE.Vector3(0, -0.05, 0);
+    const p1 = new THREE.Vector3(0, H * 0.75, 0).addScaledVector(back, 0.05);
+    const p2 = new THREE.Vector3(0, H * 1.05, 0).addScaledVector(back, 0.45);
+    const p3 = new THREE.Vector3(0, H * 0.8, 0).addScaledVector(back, 0.95);
+    return (t: number) => cubic(p0, p1, p2, p3, t);
+  }
+
+
+  /**
+   * 帽子が頭（と髪）にめり込まないようにする（毎フレーム）。今の体の頂点を帽子の中の座標へ移し、
+   *   ・円錐 … 各段の輪切りの面（中心線に垂直）で頭の外周を測り、それより細い所を太らせる
+   *   ・フリル … 各段の高さで頭の外周を測り、内側にある所を外へ押し出す
+   * 這う・つぶれるなどで頭の形が変わっても重ならない
+   */
+  private avoidHead(ctx: AttachContext): void {
+    const n = this.near.length;
+    if (n === 0) return;
+    const e = this.object.matrix.clone().invert().elements;
+    // 髪を隠しているときは頭の表面そのもの
+    const off = this.params.showHair ? ctx.index.headR * this.params.hairThickness : 0;
+    const pos = ctx.pos, nrm = ctx.nrm;
+    const pts = this.local3;
+    for (let j = 0; j < n; j++) {
+      const i = 3 * this.near[j];
+      // 髪の表面（髪の殻と同じく法線方向へ浮かせた所）
+      const x = pos[i] + nrm[i] * off, y = pos[i + 1] + nrm[i + 1] * off, z = pos[i + 2] + nrm[i + 2] * off;
+      pts[3 * j] = e[0] * x + e[4] * y + e[8] * z + e[12];
+      pts[3 * j + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
+      pts[3 * j + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
+      // 法線は向きだけ（拡大の分は正規化で消す）
+      const nx = e[0] * nrm[i] + e[4] * nrm[i + 1] + e[8] * nrm[i + 2];
+      const ny = e[1] * nrm[i] + e[5] * nrm[i + 1] + e[9] * nrm[i + 2];
+      const nz = e[2] * nrm[i] + e[6] * nrm[i + 1] + e[10] * nrm[i + 2];
+      const l = Math.hypot(nx, ny, nz) || 1;
+      this.localN[3 * j] = nx / l;
+      this.localN[3 * j + 1] = ny / l;
+      this.localN[3 * j + 2] = nz / l;
+    }
+    this.frill?.fit(pts, n);
+    const push = crownPush(pts, n, this.crownCurve());
+    let change = 0;
+    for (let k = 0; k <= CROWN_N; k++) change = Math.max(change, Math.abs(push[k] - this.crownPush[k]));
+    if (change < 0.002) return;
+    this.crownPush = push;
+    this.crownDirty = true;
+  }
+
+  /**
+   * 折れた円錐がつばを抜けて頭の側（つばより下、フリルのある側）へ出ないよう、
+   * つばの外周より内側の頂点をつばの上面の上へ押し上げる（つばと地面の間でつぶれる）
+   */
+  private keepAboveBrim(a: Float32Array, extra: number): void {
+    const R = this.brimR * BRIM_COVER;
+    for (let v = 0; v < a.length; v += 3) {
+      const r = Math.hypot(a[v], a[v + 2]);
+      if (r > R) continue;
+      const floor = this.brimTop(r) + FOLD_BRIM_CLEAR + extra;
+      if (a[v + 1] < floor) a[v + 1] = floor;
+    }
+  }
+
+  /** 太らせる量 t → 押し出し（帽子の単位） */
+  private pushAt(t: number): number {
+    const push = this.crownPush;
+    const f = Math.min(1, Math.max(0, t)) * CROWN_N, k = Math.min(CROWN_N - 1, Math.floor(f)), w = f - k;
+    return Math.max(0, push[k] * (1 - w) + push[k + 1] * w);
+  }
+
+  /**
+   * 円錐が地面に潜らないよう、布として折り曲げる（寝転がったときなど）。
+   * 中心線を根元からたどり、地面に近づく所から先は地面に沿って寝かせる。
+   * 地面側の断面は、地面までの高さに収まるようにつぶす（上側は丸いまま）。
+   * 当たらなければ null
+   */
+  private groundFold(): Fold | null {
+    const m = this.object.matrix;
+    const e = m.elements;
+    // 帽子の座標の点の、地面からの高さ（ワールド）
+    const height = (p: THREE.Vector3) => e[1] * p.x + e[5] * p.y + e[9] * p.z + e[13] - GROUND_CROWN;
+    // 帽子の座標での「上」（地面の法線）と、帽子の単位 → ワールドの長さ
+    const inv3 = new THREE.Matrix3().setFromMatrix4(m).invert();
+    const upL = new THREE.Vector3(0, 1, 0).applyMatrix3(inv3);
+    const unit = 1 / upL.length(); // 帽子の座標で長さ 1 の、ワールドでの高さ方向の長さ
+    upL.normalize();
+    const curve = this.crownCurve();
+    const N = FOLD_N;
+    const c = Array.from({ length: N + 1 }, (_, i) => curve(i / N));
+    // 中心線は地面から断面の半径の FOLD_LIFT 倍より下へ行かせない（そこから下の断面はつぶす）
+    const need = (i: number) => (crownBase(i / N, 0) + this.pushAt(i / N)) * unit * FOLD_LIFT + FOLD_CLEAR;
+    let first = -1;
+    for (let i = 0; i <= N; i++) {
+      if (height(c[i]) < need(i)) { first = i; break; }
+    }
+    if (first < 0) return null;
+    // 寝かせる向き：当たった所の中心線の向きを地面に沿わせたもの
+    const i0 = Math.max(0, first - 1);
+    const tan = c[Math.min(N, i0 + 1)].clone().sub(c[i0]).normalize();
+    const along = tan.clone().addScaledVector(upL, -tan.dot(upL));
+    if (along.lengthSq() < 1e-6) {
+      // 真下を向いているとき：先の折れる向き（後ろ）を地面に沿わせる
+      const back = c[N].clone().sub(c[0]);
+      along.copy(back).addScaledVector(upL, -back.dot(upL));
+      if (along.lengthSq() < 1e-6) along.set(1, 0, 0).addScaledVector(upL, -upL.x);
+    }
+    along.normalize();
+    // 新しい中心線：i0 までは元のまま。そこから先は、少しずつ地面に沿う向きへ曲げながら同じ長さだけ進む
+    const P = c.map((v) => v.clone());
+    for (let i = i0 + 1; i <= N; i++) {
+      const seg = c[i].distanceTo(c[i - 1]);
+      const orig = c[i].clone().sub(c[i - 1]).normalize();
+      const w = Math.min(1, (i - i0) / FOLD_BEND);
+      const d = orig.lerp(along, w).normalize();
+      P[i].copy(P[i - 1]).addScaledVector(d, seg);
+      // 地面の上に断面の半径ぶん浮かせる
+      const h = height(P[i]);
+      if (h < need(i)) P[i].addScaledVector(upL, (need(i) - h) / unit);
+    }
+    // 各段の断面を、元の中心線の向きから新しい向きへ回す
+    const q: THREE.Quaternion[] = [];
+    for (let i = 0; i <= N; i++) {
+      const a = Math.max(0, i - 1), b = Math.min(N, i + 1);
+      const t0 = c[b].clone().sub(c[a]).normalize();
+      const t1 = P[b].clone().sub(P[a]).normalize();
+      // 頭を包む付け根の断面は回さない（回すと縁が持ち上がって顔にかかる）。先へ行くほど中心線に合わせる
+      const keep = THREE.MathUtils.smoothstep(i / N, FOLD_KEEP, FOLD_KEEP + 0.25);
+      q.push(new THREE.Quaternion().slerp(new THREE.Quaternion().setFromUnitVectors(t0, t1), keep));
+    }
+    // 各段の中心の、地面からの高さ（帽子の単位。つぶすときに使う）
+    const room = P.map((v) => Math.max(0, (height(v) - FOLD_CLEAR) / unit));
+    return { centers: P, rot: q, orig: c, up: upL, room };
+  }
+
+  rebuild(ctx: AttachContext): void {
+    const ix = ctx.index;
+    // 向きと大きさは決まった高さの4点で決める（位置の調整で大きさが変わらないように）。
+    // 背の低い体型では頭のてっぺんより上にならないよう抑える（4点が1か所に集まると向きが決まらない）
+    const fy = Math.min(ANCHOR_FY, ix.topFy - 0.3);
+    this.anchors = [0, Math.PI / 2, Math.PI, -Math.PI / 2].map((az) => ix.nearestAz(az, fy));
+    const p = this.anchors.map((i) => ix.restPoint(i));
+    const m = frameOf(p[0], p[1], p[2], p[3]);
+    this.restInv.copy(m).invert();
+    this.restWidth = p[1].distanceTo(p[3]);
+    // かぶる所の半径：左右の半幅と、中心から前までの距離の平均
+    // （後ろの点は胴の長い体型では頭から離れるので使わない）
+    const c = new THREE.Vector3().setFromMatrixPosition(m);
+    const r0 = (p[1].distanceTo(p[3]) / 2 + Math.hypot(p[0].x - c.x, p[0].z - c.z)) / 2;
+    // 静止形状の中で、帽子をまっすぐ立てて置く（傾きは調整値で加える）
+    const tilt = new THREE.Euler(
+      (-this.params.hatTilt * Math.PI) / 180, 0, (-this.params.hatSide * Math.PI) / 180, 'XZY',
+    );
+    const s = r0 * this.params.hatScale;
+    // 位置の調整（かぶる所の半径が単位。x：右、y：上、z：前）
+    const { hatX, hatY, hatZ } = this.params;
+    this.local.compose(
+      c.clone().add(new THREE.Vector3(hatX * r0, (0.06 + hatY) * r0, hatZ * r0)),
+      new THREE.Quaternion().setFromEuler(tilt),
+      new THREE.Vector3(s, s, s),
+    );
+    // 当たり判定に使う頂点：静止形状で帽子のまわり（顔の下あたりから上）にあるもの
+    const inv = this.local.clone().invert();
+    const v = new THREE.Vector3();
+    const near: number[] = [];
+    for (let i = 0; i < ix.rest.length / 3; i++) {
+      v.set(ix.rest[3 * i], ix.rest[3 * i + 1], ix.rest[3 * i + 2]).applyMatrix4(inv);
+      // 寝転がって折れ曲がった円錐が顔にかかることがあるので、顔の下まで含める
+      if (v.y > NEAR_BELOW && Math.hypot(v.x, v.z) < 2.6) near.push(i);
+    }
+    this.near = Int32Array.from(near);
+    this.local3 = new Float32Array(near.length * 3);
+    this.localN = new Float32Array(near.length * 3);
+    this.crownPush.fill(-1); // 次の update で必ず当て直す
+    this.frill?.invalidate();
+    this.update(ctx);
+  }
+
+  update(ctx: AttachContext): void {
+    const p = this.anchors.map((i) => {
+      const v = new THREE.Vector3();
+      readVertex(ctx.pos, ctx.nrm, i, v);
+      return v;
+    });
+    const cur = frameOf(p[0], p[1], p[2], p[3]);
+    // 横に広がったら少しだけ大きく（つぶれた体に帽子が沈み込まないように）
+    const k = THREE.MathUtils.clamp(p[1].distanceTo(p[3]) / this.restWidth, 0.85, 1.25);
+    const grow = new THREE.Matrix4().makeScale(Math.sqrt(k), 1, Math.sqrt(k));
+    this.object.matrix.copy(cur).multiply(grow).multiply(this.restInv).multiply(this.local);
+    this.object.matrixWorldNeedsUpdate = true;
+    if (this.object.visible) {
+      this.avoidHead(ctx);
+      const fold = this.groundFold();
+      if (fold || this.folded || this.crownDirty) {
+        // 折り曲げた円錐は断面が回って頭にかかることがあるので、体の外へ押し出す
+        const grid = fold ? new PointGrid(this.local3, this.localN, this.near.length, BODY_CELL) : null;
+        this.crownParts.forEach((part, k) => {
+          // 帯（外側の布）はつばの側、円錐はその内側に重ねる（同じ高さだと重なってちらつく）
+          const layer = k === 0 ? FOLD_LAYER : 0;
+          part.apply((t) => this.pushAt(t), fold, fold ? (a) => {
+            grid?.pushOut(a, BODY_CLEAR);
+            this.keepAboveBrim(a, layer);
+          } : undefined);
+        });
+        // 折れているときは円錐の表面について行く。普段は元の形のまま、円錐が太った分だけ外へ
+        const shift = this.bowDir.clone().multiplyScalar(this.pushAt(0.08) * 0.98);
+        for (const f of this.bowFollow) f.apply(fold !== null, shift);
+        // つば：折れているときは頭（髪）にめり込む所を外へ押し出す。普段は元の形
+        if (this.brimGeometry) {
+          const p = this.brimGeometry.getAttribute('position') as THREE.BufferAttribute;
+          const a = p.array as Float32Array;
+          a.set(this.brimBase);
+          grid?.pushOut(a, BODY_CLEAR);
+          p.needsUpdate = true;
+          this.brimGeometry.computeVertexNormals();
+          this.brimGeometry.computeBoundingSphere();
+        }
+        this.folded = fold !== null;
+        this.crownDirty = false;
+      }
+    }
+  }
+
+  dispose(): void {
+    this.materials.forEach((m) => m.dispose());
+    this.geometries.forEach((g) => g.dispose());
+  }
+}
+
+/**
+ * 前・右・後ろ・左の4点から、左右の中点を原点・右を x・上を y・前を z とする枠。
+ * 前後は向きにだけ使う（胴の長い体型では後ろの点が頭から離れるため）
+ */
+function frameOf(f: THREE.Vector3, r: THREE.Vector3, b: THREE.Vector3, l: THREE.Vector3): THREE.Matrix4 {
+  const c = r.clone().add(l).multiplyScalar(0.5);
+  const x = r.clone().sub(l).normalize();
+  const z0 = f.clone().sub(b).normalize();
+  const y = new THREE.Vector3().crossVectors(z0, x).normalize();
+  const z = new THREE.Vector3().crossVectors(x, y).normalize();
+  return new THREE.Matrix4().makeBasis(x, y, z).setPosition(c);
+}
+
+function cubic(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, t: number): THREE.Vector3 {
+  const u = 1 - t;
+  return a.clone().multiplyScalar(u * u * u)
+    .addScaledVector(b, 3 * u * u * t)
+    .addScaledVector(c, 3 * u * t * t)
+    .addScaledVector(d, t * t * t);
+}
+
+/** リボンを帯の上へ持ち上げる量（帽子の単位） */
+const BOW_RAISE = 0.06;
+/** 折れた円錐をつばの上に保つ範囲（つばの外周の半径に対する比。外周の波の分だけ広め） */
+const BRIM_COVER = 1.04;
+/** 折れた円錐をつばの上面から離しておく隙間（帽子の単位。狭いと重なった面がちらつく） */
+const FOLD_BRIM_CLEAR = 0.07;
+/** 折れた円錐を、帯よりさらにつばから離す量（帽子の単位） */
+const FOLD_LAYER = 0.05;
+/** リボンをつばの上面から離しておく隙間（帽子の単位） */
+const BRIM_CLEAR = 0.02;
+
+/** つばの上面の高さ（中心からの距離 r の所。つばの断面の上側。外周の波は含まない） */
+function brimTopAt(B: number): (r: number) => number {
+  const pts: [number, number][] = [[0.8, 0.02], [1.15, 0.035], [B * 0.8, 0.0], [B * 0.97, -0.09], [B, -0.12]];
+  return (r) => {
+    if (r <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      if (r <= pts[i][0]) {
+        const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+        return y0 + ((y1 - y0) * (r - x0)) / (x1 - x0);
+      }
+    }
+    return pts[pts.length - 1][1];
+  };
+}
+
+/** つばの外周を上下に波打たせる（中心から minR より外だけ） */
+function waveRim(g: THREE.BufferGeometry, minR: number, waves: number, amp: number): void {
+  const p = g.getAttribute('position') as THREE.BufferAttribute;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i);
+    const r = Math.hypot(x, z);
+    if (r <= minR) continue;
+    const a = Math.atan2(x, z);
+    p.setY(i, p.getY(i) + amp * ((r - minR) / (1 - minR + 1e-6)) * Math.sin(a * waves + 0.7));
+  }
+  g.computeVertexNormals();
+}
+
+/** 円錐の元の太さ（根元は頭を包む太さ。上ほど細く、少しくびれてから先がとがる） */
+function crownBase(t: number, a: number): number {
+  return 1.15 * Math.pow(1 - t, 0.8) * (1 + CROWN_WAVE * Math.sin(a * 5 + t * 6)) + 0.005;
+}
+const CROWN_WAVE = 0.025;
+/** つばの上面の高さ（つばの形の内側の高さ） */
+const BRIM_TOP = 0.035;
+/** 円錐の当たり判定の段の数 */
+const CROWN_N = 40;
+
+/**
+ * 円錐の各段をどれだけ太らせるか。pts は帽子の中の座標の点（髪の表面）。
+ * 円錐は後ろへ傾いて曲がるので、各段の輪切りの面（中心線に垂直）に沿って測る
+ */
+function crownPush(pts: Float32Array, n: number, curve: (t: number) => THREE.Vector3): Float32Array {
+  const N = CROWN_N;
+  // 円錐の元の太さ（波の一番内側）
+  const inner = (t: number) => 1.15 * Math.pow(1 - t, 0.8) * (1 - CROWN_WAVE) + 0.005;
+  // 円錐の表面からこれより外の点は見ない（傾いた輪切りの面が遠くで体を横切る所）
+  const REACH = 0.6;
+  const band = 0.06;
+  const cs = Array.from({ length: N + 1 }, (_, i) => curve(i / N));
+  const ts = cs.map((_, i) => curve(Math.min(1, (i + 1) / N)).sub(curve(Math.max(0, (i - 1) / N))).normalize());
+  const lim = cs.map((_, k) => inner(k / N) + REACH);
+  const need = new Float32Array(N + 1);
+  for (let j = 0; j < n; j++) {
+    const x = pts[3 * j], y = pts[3 * j + 1], z = pts[3 * j + 2];
+    // つばより下はつばとフリルに隠れるので見ない
+    if (y < BRIM_TOP) continue;
+    for (let k = 0; k <= N; k++) {
+      const c = cs[k], t = ts[k];
+      const dx = x - c.x, dy = y - c.y, dz = z - c.z;
+      const along = dx * t.x + dy * t.y + dz * t.z;
+      if (along > band || along < -band) continue;
+      const rad = Math.hypot(dx - t.x * along, dy - t.y * along, dz - t.z * along);
+      if (rad > need[k] && rad < lim[k]) need[k] = rad;
+    }
+  }
+  // 波の一番内側が「髪の表面 + 隙間」に届くまで
+  const raw = Float32Array.from(need, (R, k) => (R > 0 ? Math.max(0, R + CROWN_GAP - inner(k / N)) : 0));
+  // 測った段の間で足りなくならないよう、隣の段も見る
+  const push = Float32Array.from(raw, (_, k) => Math.max(raw[Math.max(0, k - 1)], raw[k], raw[Math.min(N, k + 1)]));
+  // 半径（元の太さ + 押し出し）が上の段より細くならないよう、下の段を広げる
+  for (let k = N - 1; k >= 0; k--) {
+    push[k] = Math.max(push[k], inner((k + 1) / N) + push[k + 1] - inner(k / N));
+  }
+  return push;
+}
+
+/** tubeAlong で作った管を、段ごとに外へ太らせる（作り直さずに頂点を動かす） */
+/** 地面で折り曲げた円錐の中心線（FOLD_N 段）。orig は元の中心線、rot は各段の断面の回転 */
+interface Fold {
+  centers: THREE.Vector3[];
+  orig: THREE.Vector3[];
+  rot: THREE.Quaternion[];
+  /** 帽子の座標での上（地面の法線） */
+  up: THREE.Vector3;
+  /** 各段の中心から地面までの高さ（帽子の単位） */
+  room: number[];
+}
+/** 折り曲げの段の数 */
+const FOLD_N = 56;
+/** 何段かけて地面に沿う向きへ曲げるか */
+const FOLD_BEND = 6;
+/** 付け根からここ（中心線の割合）までは断面を回さない */
+const FOLD_KEEP = 0.12;
+/** 寝かせた円錐の中心を、地面から断面の半径の何倍の高さに置くか（それより下はつぶす） */
+const FOLD_LIFT = 0.35;
+/** 折り曲げた円錐を地面から離しておく隙間（ワールド） */
+const FOLD_CLEAR = 0.004;
+
+/** 当たり判定に使う体の頂点の範囲：帽子の座標でこれより上 */
+const NEAR_BELOW = -2.4;
+/** 体の外へ押し出すときの升目の大きさと、体から離しておく隙間（帽子の単位） */
+const BODY_CELL = 0.2;
+const BODY_CLEAR = 0.03;
+
+/**
+ * 体の表面の点（と法線）を升目に分けたもの。近い点を素早く探して、
+ * 体の内側に入った頂点を外へ押し出す
+ */
+class PointGrid {
+  private readonly cells = new Map<number, number[]>();
+
+  constructor(
+    private readonly pts: Float32Array,
+    private readonly nrm: Float32Array,
+    n: number,
+    private readonly cell: number,
+  ) {
+    for (let j = 0; j < n; j++) {
+      const k = this.key(pts[3 * j], pts[3 * j + 1], pts[3 * j + 2]);
+      const list = this.cells.get(k);
+      if (list) list.push(j);
+      else this.cells.set(k, [j]);
+    }
+  }
+
+  private key(x: number, y: number, z: number): number {
+    const c = this.cell;
+    return this.keyOf(Math.floor(x / c), Math.floor(y / c), Math.floor(z / c));
+  }
+
+  private keyOf(i: number, j: number, k: number): number {
+    return ((i + 512) * 1024 + (j + 512)) * 1024 + (k + 512);
+  }
+
+  /** a（x,y,z の並び）の各頂点で、一番近い体の点の法線の向きに clear 以上離れていなければ外へ出す */
+  pushOut(a: Float32Array, clear: number): void {
+    const c = this.cell, P = this.pts, N = this.nrm;
+    for (let v = 0; v < a.length; v += 3) {
+      const x = a[v], y = a[v + 1], z = a[v + 2];
+      const ci = Math.floor(x / c), cj = Math.floor(y / c), ck = Math.floor(z / c);
+      let best = -1, bestD = Infinity;
+      for (let di = -1; di <= 1; di++) {
+        for (let dj = -1; dj <= 1; dj++) {
+          for (let dk = -1; dk <= 1; dk++) {
+            const list = this.cells.get(this.keyOf(ci + di, cj + dj, ck + dk));
+            if (!list) continue;
+            for (const j of list) {
+              const d = (P[3 * j] - x) ** 2 + (P[3 * j + 1] - y) ** 2 + (P[3 * j + 2] - z) ** 2;
+              if (d < bestD) { bestD = d; best = j; }
+            }
+          }
+        }
+      }
+      if (best < 0) continue;
+      const nx = N[3 * best], ny = N[3 * best + 1], nz = N[3 * best + 2];
+      const out = (x - P[3 * best]) * nx + (y - P[3 * best + 1]) * ny + (z - P[3 * best + 2]) * nz;
+      if (out >= clear) continue;
+      a[v] = x + nx * (clear - out);
+      a[v + 1] = y + ny * (clear - out);
+      a[v + 2] = z + nz * (clear - out);
+    }
+  }
+}
+
+/**
+ * 円錐の表面に貼った部品（リボン）を、円錐の頂点の動きに合わせて動かす。
+ * 部品の各頂点に一番近い円錐の頂点を最初に決めておき、その頂点と同じだけずらす
+ */
+class Follow {
+  private readonly base: Float32Array;
+  private readonly baseNormal: Float32Array;
+  private readonly near: Int32Array;
+
+  constructor(private readonly geometry: THREE.BufferGeometry, private readonly target: Swell) {
+    const p = geometry.getAttribute('position') as THREE.BufferAttribute;
+    this.base = Float32Array.from(p.array as Float32Array);
+    this.baseNormal = Float32Array.from(geometry.getAttribute('normal').array as Float32Array);
+    this.near = new Int32Array(p.count);
+    const t = target.rest;
+    for (let v = 0; v < p.count; v++) {
+      const x = this.base[3 * v], y = this.base[3 * v + 1], z = this.base[3 * v + 2];
+      let best = 0, bd = Infinity;
+      for (let j = 0; j < t.length; j += 3) {
+        const d = (t[j] - x) ** 2 + (t[j + 1] - y) ** 2 + (t[j + 2] - z) ** 2;
+        if (d < bd) { bd = d; best = j; }
+      }
+      this.near[v] = best;
+    }
+  }
+
+  /** follow なら円錐の頂点について行く。そうでなければ元の形を shift だけずらす */
+  apply(follow: boolean, shift: THREE.Vector3): void {
+    const p = this.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const a = p.array as Float32Array;
+    const rest = this.target.rest, cur = this.target.current;
+    const s = [shift.x, shift.y, shift.z];
+    for (let v = 0; v < p.count; v++) {
+      const j = this.near[v];
+      for (let c = 0; c < 3; c++) {
+        a[3 * v + c] = this.base[3 * v + c] + (follow ? cur[j + c] - rest[j + c] : s[c]);
+      }
+    }
+    p.needsUpdate = true;
+    if (follow) this.geometry.computeVertexNormals();
+    else {
+      const n = this.geometry.getAttribute('normal') as THREE.BufferAttribute;
+      (n.array as Float32Array).set(this.baseNormal);
+      n.needsUpdate = true;
+    }
+    this.geometry.computeBoundingSphere();
+  }
+}
+
+class Swell {
+  private readonly base: Float32Array;
+  private readonly dir: Float32Array;
+  private readonly dist: Float32Array;
+  private readonly t: Float32Array;
+
+  constructor(
+    private readonly geometry: THREE.BufferGeometry,
+    segments: number,
+    ring: number,
+    tOf: (row: number) => number,
+    curve: (t: number) => THREE.Vector3,
+    private readonly scale: number,
+  ) {
+    const p = geometry.getAttribute('position') as THREE.BufferAttribute;
+    this.base = Float32Array.from(p.array as Float32Array);
+    this.dir = new Float32Array(p.count * 3);
+    this.dist = new Float32Array(p.count);
+    this.t = new Float32Array(p.count);
+    for (let i = 0; i <= segments; i++) {
+      const t = tOf(i);
+      const c = curve(t);
+      for (let j = 0; j < ring; j++) {
+        const v = i * ring + j;
+        const d = new THREE.Vector3(p.getX(v) - c.x, p.getY(v) - c.y, p.getZ(v) - c.z);
+        this.dist[v] = d.length();
+        d.normalize();
+        this.dir.set([d.x, d.y, d.z], 3 * v);
+        this.t[v] = t;
+      }
+    }
+  }
+
+  /** 元の頂点位置 */
+  get rest(): Float32Array {
+    return this.base;
+  }
+
+  /** 今の頂点位置 */
+  get current(): Float32Array {
+    return (this.geometry.getAttribute('position') as THREE.BufferAttribute).array as Float32Array;
+  }
+
+  /** push(t) だけ太らせる。fold があれば、断面を折り曲げた中心線へ移す */
+  apply(push: (t: number) => number, fold: Fold | null = null, post?: (a: Float32Array) => void): void {
+    const p = this.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const a = p.array as Float32Array;
+    const off = new THREE.Vector3(), q = new THREE.Quaternion(), c = new THREE.Vector3();
+    for (let v = 0; v < p.count; v++) {
+      const t = this.t[v];
+      const k = push(t) * this.scale;
+      if (!fold) {
+        for (let j = 0; j < 3; j++) a[3 * v + j] = this.base[3 * v + j] + this.dir[3 * v + j] * k;
+        continue;
+      }
+      // 元の中心からのずれを、折り曲げた段の向きへ回して、新しい中心に足す
+      const f = Math.min(1, Math.max(0, t)) * FOLD_N, i = Math.min(FOLD_N - 1, Math.floor(f)), w = f - i;
+      const o = fold.orig[i].clone().lerp(fold.orig[i + 1], w);
+      c.copy(fold.centers[i]).lerp(fold.centers[i + 1], w);
+      q.copy(fold.rot[i]).slerp(fold.rot[i + 1], w);
+      off.set(this.base[3 * v], this.base[3 * v + 1], this.base[3 * v + 2]).sub(o)
+        .addScaledVector(new THREE.Vector3(this.dir[3 * v], this.dir[3 * v + 1], this.dir[3 * v + 2]), k)
+        .applyQuaternion(q);
+      // 地面側（下向き）のずれは、地面までの高さに収まるよう縮める
+      const down = -off.dot(fold.up);
+      if (down > 0) {
+        const room = fold.room[i] * (1 - w) + fold.room[i + 1] * w;
+        const r = this.dist[v] + k;
+        if (r > room) off.addScaledVector(fold.up, down * (1 - room / r));
+      }
+      a[3 * v] = c.x + off.x;
+      a[3 * v + 1] = c.y + off.y;
+      a[3 * v + 2] = c.z + off.z;
+    }
+    post?.(a);
+    p.needsUpdate = true;
+    this.geometry.computeVertexNormals();
+    this.geometry.computeBoundingSphere();
+  }
+}
+/** 円錐を広げたとき、頭・髪から離しておく隙間（帽子の単位） */
+const CROWN_GAP = 0.015;
+
+/** 帽子の4点を取る高さ（顔座標の y） */
+const ANCHOR_FY = 0.98;
+
+/**
+ * つばの下に垂れるフリル：根元はかぶる所の半径、下へ広がりながら細かく波打つ。
+ * 頭（と髪）にめり込む所は、波の形を保ったまま外へ押し出す（fit）
+ */
+class Frill {
+  static readonly SEG = 220;
+  static readonly ROWS = 6;
+  static readonly WAVES = 30;
+  /** 押し出したあとも頭・髪から離しておく隙間（帽子の単位） */
+  static readonly GAP = 0.05;
+  readonly geometry = new THREE.BufferGeometry();
+  private last: Float32Array[] = [];
+
+  constructor() {
+    const { SEG, ROWS } = Frill;
+    this.geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array((ROWS + 1) * (SEG + 1) * 3), 3));
+    const index: number[] = [];
+    for (let r = 0; r < ROWS; r++) {
+      for (let s = 0; s < SEG; s++) {
+        const a = r * (SEG + 1) + s, b = a + SEG + 1;
+        index.push(a, a + 1, b, b, a + 1, b + 1);
+      }
+    }
+    this.geometry.setIndex(index);
+    this.place(() => 0);
+  }
+
+  /** 元の形。push(段, 列) だけ外へ広げる */
+  private place(push: (r: number, s: number) => number): void {
+    const { SEG, ROWS, WAVES } = Frill;
+    const p = this.geometry.getAttribute('position') as THREE.BufferAttribute;
+    for (let r = 0; r <= ROWS; r++) {
+      const v = r / ROWS;
+      for (let s = 0; s <= SEG; s++) {
+        const a = (s / SEG) * Math.PI * 2;
+        // 根元はつばの裏（頭の少し外）、下へ広がって頭のまわりに垂れる
+        const rad = Frill.baseRad(v) + 0.07 * v * Math.sin(a * WAVES) + push(r, s % SEG);
+        const y = Frill.baseY(v) + 0.035 * v * Math.sin(a * WAVES * 0.5 + 1);
+        p.setXYZ(r * (SEG + 1) + s, Math.sin(a) * rad, y, Math.cos(a) * rad);
+      }
+    }
+    p.needsUpdate = true;
+    this.geometry.computeVertexNormals();
+    this.geometry.computeBoundingSphere();
+  }
+
+  private static baseRad(v: number): number { return 1.1 + 0.45 * v; }
+  private static baseY(v: number): number { return -0.03 - 0.38 * v; }
+
+  /** 次の fit で必ず頂点を置き直す */
+  invalidate(): void {
+    this.last = [];
+  }
+
+  /**
+   * pts（帽子の中の座標の点。髪の表面）について、フリルの各段の高さで頭の外周の半径を測り、
+   * そこに隙間を足した所より内側にあるフリルを外へ押し出す
+   */
+  fit(pts: Float32Array, n: number): void {
+    const { SEG, ROWS } = Frill;
+    // 段ごと・角度ごとの頭の外周の半径
+    const BINS = 90;
+    const need = Array.from({ length: ROWS + 1 }, () => new Float32Array(BINS));
+    const band = 0.07; // 段の高さからこの範囲の点を見る
+    for (let j = 0; j < n; j++) {
+      const x = pts[3 * j], y = pts[3 * j + 1], z = pts[3 * j + 2];
+      const rad = Math.hypot(x, z);
+      const bin = Math.floor(((Math.atan2(x, z) / (Math.PI * 2) + 1) % 1) * BINS) % BINS;
+      for (let r = 0; r <= ROWS; r++) {
+        if (Math.abs(y - Frill.baseY(r / ROWS)) > band) continue;
+        if (rad > need[r][bin]) need[r][bin] = rad;
+      }
+    }
+    // 押し出す量：波の一番内側が「頭の外周 + 髪 + 隙間」に届くまで
+    const push = need.map((row, r) => {
+      const v = r / ROWS;
+      const inner = Frill.baseRad(v) - 0.07 * v;
+      return Float32Array.from(row, (R) => (R > 0 ? Math.max(0, R + Frill.GAP - inner) : 0));
+    });
+    // 隣の角度も見て（頂点の間をすり抜けないように）なめらかにする
+    const smooth = push.map((row) => Float32Array.from(row, (_, b) => {
+      let m = 0;
+      for (let k = -2; k <= 2; k++) m = Math.max(m, row[(b + k + BINS) % BINS]);
+      return m;
+    }));
+    // 下の段は上の段より内側に入らない（裾がすぼまって頭に巻き込まないように）
+    for (let r = 1; r <= ROWS; r++) {
+      for (let b = 0; b < BINS; b++) smooth[r][b] = Math.max(smooth[r][b], smooth[r - 1][b]);
+    }
+    // 前と変わらなければ頂点を動かさない
+    let change = this.last.length === 0 ? 1 : 0;
+    for (let r = 0; r <= ROWS && change < 0.002; r++) {
+      for (let b = 0; b < BINS; b++) change = Math.max(change, Math.abs(smooth[r][b] - this.last[r][b]));
+    }
+    if (change < 0.002) return;
+    this.last = smooth;
+    this.place((r, s) => {
+      const t = (s / SEG) * BINS - 0.5;
+      const b0 = Math.floor(t), f = t - b0;
+      const row = smooth[r];
+      return row[(b0 + BINS) % BINS] * (1 - f) + row[(b0 + 1) % BINS] * f;
+    });
+  }
+}

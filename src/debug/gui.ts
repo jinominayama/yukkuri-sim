@@ -1,0 +1,251 @@
+import GUI from 'lil-gui';
+import { DEFAULT_LIFE, type Yukkuri } from '../yukkuri/Yukkuri';
+import { DEFAULT_SKIN } from '../render/toonMaterial';
+import { MIN_HOP_HEIGHT } from '../yukkuri/locomotion';
+import { LockManager } from './locks';
+import { STYLES } from '../face/styles';
+import { createFacePanel } from './facePanel';
+import { CHARACTERS } from '../character';
+import { allPresets, findPreset, isOverridden, resetPreset, saveLastPresetId, savePreset, USER_PRESET_ID } from '../yukkuri/presets';
+
+export interface ViewSettings {
+  /** 時間の速さ（1 = 実時間） */
+  timeScale: number;
+  paused: boolean;
+  followCamera: boolean;
+  /** クリックでつつく強さ (m/s) */
+  pokeStrength: number;
+}
+
+/** 調整パネル（開発中のみ） */
+export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
+  const gui = new GUI({ title: '調整パネル' });
+  let locks: LockManager | null = null;
+  const refresh = () => gui.controllersRecursive().forEach((c) => c.updateDisplay());
+
+  // 体型プリセット：選ぶと適用。調整した値は選んでいる体型に上書き保存できる
+  const pre = gui.addFolder('体型プリセット');
+  const info = createPresetInfo();
+  const presetState = { id: y.presetId };
+  const showInfo = (id: string, note?: string) => {
+    const p = findPreset(id);
+    if (!p) return;
+    const saved = isOverridden(id) ? '（保存した値）' : '（初期設定）';
+    info.show(p.name + saved, note ?? p.description);
+  };
+  const applyPreset = (id: string) => {
+    const p = findPreset(id);
+    if (!p) return;
+    y.applyPreset(p);
+    // ロックした項目は体型を切り替えても固定値のまま
+    locks?.restore();
+    presetState.id = p.id;
+    saveLastPresetId(p.id);
+    showInfo(p.id);
+    refresh();
+  };
+  pre.add(presetState, 'id', Object.fromEntries(allPresets().map((p) => [p.name, p.id]))).name('体型').onChange(applyPreset)
+    .domElement.classList.add('no-lock');
+  pre.add({
+    f: () => {
+      const name = findPreset(presetState.id)?.name ?? '';
+      const ok = savePreset(presetState.id, y);
+      showInfo(presetState.id, ok ? `現在の値を「${name}」に保存しました。` : '保存できませんでした（保存領域が使えません）。');
+    },
+  }, 'f').name('現在の値をこの体型に保存');
+  pre.add({
+    f: () => {
+      const from = findPreset(presetState.id)?.name ?? '';
+      if (presetState.id !== USER_PRESET_ID &&
+        !confirm(`現在の値（${from}）でユーザー設定を上書きします。ユーザー設定に保存していた値は消えます。よろしいですか？`)) return;
+      const ok = savePreset(USER_PRESET_ID, y);
+      showInfo(presetState.id, ok ? `現在の値（${from}）をユーザー設定に上書きしました。` : '保存できませんでした（保存領域が使えません）。');
+    },
+  }, 'f').name('現在の値をユーザー設定に上書き');
+  showInfo(y.presetId);
+
+  const act = gui.addFolder('操作');
+  act.add({ f: () => y.drop(1.0) }, 'f').name('高さ1mから落とす');
+  act.add({ f: () => y.drop(0.02) }, 'f').name('その場に置き直す');
+  act.add({ f: () => y.impulse(0, 3.2, 0) }, 'f').name('真上に跳ねさせる');
+  act.add({ f: () => y.impulse(1.2, 2.6, 0) }, 'f').name('横に跳ねさせる');
+  act.add(view, 'pokeStrength', 0, 8, 0.1).name('つつく強さ');
+  act.add(view, 'timeScale', 0.05, 2, 0.05).name('時間の速さ');
+  act.add(view, 'paused').name('一時停止');
+  act.add(view, 'followCamera').name('カメラ追従');
+
+  // 顔：体型プリセットとは別に管理する（体型を切り替えても変わらないのでロックは付けない）。
+  // 表情のパーツは画面左上のパーツ選択画面で選ぶ
+  const face = gui.addFolder('顔');
+  const noLock = (c: { domElement: HTMLElement }) => c.domElement.classList.add('no-lock');
+  const saveFace = () => y.face.save();
+  noLock(face.add(y.face.settings, 'style', Object.fromEntries(STYLES.map((s) => [s.name, s.id]))).name('絵柄').onChange(saveFace));
+  noLock(face.addColor(y.face.settings, 'iris').name('瞳の色').onChange(saveFace));
+  noLock(face.add(y.face.settings, 'blink').name('まばたき').onChange(saveFace));
+  createFacePanel(leftColumn(), y.face);
+
+  // キャラクター（髪・帽子などの装飾）：体型とは別に管理する
+  const chara = gui.addFolder('キャラクター');
+  const outfit = y.outfit;
+  const charState = { id: outfit.characterId };
+  const saveOutfit = () => outfit.save();
+  const rebuildOutfit = () => { outfit.rebuild(); outfit.save(); };
+  noLock(chara.add(charState, 'id', Object.fromEntries(CHARACTERS.map((c) => [c.name, c.id]))).name('キャラクター')
+    .onChange((id: string) => {
+      outfit.setCharacter(id);
+      const iris = outfit.character.iris;
+      if (iris) { y.face.settings.iris = iris; y.face.save(); }
+      refresh();
+    }));
+  noLock(chara.add(outfit.params, 'showHair').name('髪').onChange(() => { outfit.applyVisibility(); saveOutfit(); }));
+  noLock(chara.add(outfit.params, 'showHat').name('帽子').onChange(() => { outfit.applyVisibility(); saveOutfit(); }));
+  noLock(chara.add(outfit.params, 'showBraid').name('三つ編み').onChange(() => { outfit.applyVisibility(); saveOutfit(); }));
+  noLock(chara.add(outfit.params, 'hatScale', 0.6, 1.6, 0.01).name('帽子の大きさ').onChange(rebuildOutfit));
+  noLock(chara.add(outfit.params, 'hatX', -0.5, 0.5, 0.01).name('帽子の位置：左右').onChange(rebuildOutfit));
+  noLock(chara.add(outfit.params, 'hatY', -0.5, 0.5, 0.01).name('帽子の位置：上下').onChange(rebuildOutfit));
+  noLock(chara.add(outfit.params, 'hatZ', -0.5, 0.5, 0.01).name('帽子の位置：前後').onChange(rebuildOutfit));
+  noLock(chara.add(outfit.params, 'hatTilt', -30, 30, 1).name('帽子の前後の傾き').onChange(rebuildOutfit));
+  noLock(chara.add(outfit.params, 'hatSide', -30, 30, 1).name('帽子の左右の傾き').onChange(rebuildOutfit));
+  noLock(chara.add(outfit.params, 'hairThickness', 0, 0.1, 0.001).name('髪の厚み').onChange(rebuildOutfit));
+
+  const mv = gui.addFolder('移動（地面をクリックで目的地）');
+  const status = { state: '' };
+  mv.add(status, 'state').name('状態').disable().listen();
+  setInterval(() => (status.state = y.locomotion.stateLabel), 100);
+  mv.add(y.move, 'mode', { '跳ねる': 'hop', '這う': 'crawl' }).name('移動方法');
+  mv.add(y.move, 'canHop').name('跳ねられる体');
+  mv.add(y.move, 'wander').name('自分でうろつく');
+  mv.add({ f: () => y.locomotion.stop() }, 'f').name('止まる');
+  mv.add(y.move, 'hopHeight', MIN_HOP_HEIGHT, 0.6, 0.01).name('跳ぶ高さ');
+  mv.add(y.move, 'hopDistance', 0.05, 1.2, 0.01).name('1回で進む距離');
+  mv.add(y.move, 'crouchDepth', 0.5, 1, 0.01).name('溜めの深さ');
+  mv.add(y.move, 'crouchTime', 0.05, 0.8, 0.01).name('溜めの時間');
+  mv.add(y.move, 'restTime', 0, 1.5, 0.01).name('着地後の間');
+  mv.add(y.move, 'turnSpeed', 0.3, 6, 0.1).name('向きを変える速さ');
+  mv.add(y.move, 'hopTurnMax', 10, 90, 1).name('跳ねる：顔を向ける最大角度');
+  mv.add(y.move, 'crawlTurnMax', 10, 90, 1).name('這う：顔を向ける最大角度');
+  mv.add(y.move, 'crawlStretch', 1, 1.8, 0.01).name('這う：前に伸びる量');
+  mv.add(y.move, 'crawlSquash', 0.5, 1, 0.01).name('這う：潰れる深さ');
+  mv.add(y.move, 'crawlBend', 0, 0.8, 0.01).name('這う：頭を前に出す量');
+  mv.add(y.move, 'crawlRhythm', 0.2, 2, 0.05).name('這う：リズム');
+
+  const pose = gui.addFolder('体勢');
+  pose.add({ f: () => y.locomotion.lieDown('prone') }, 'f').name('腹ばいになる');
+  pose.add({ f: () => y.locomotion.lieDown('supine') }, 'f').name('仰向けになる');
+  pose.add({ f: () => y.locomotion.getUp() }, 'f').name('起き上がる');
+
+  const soft = gui.addFolder('柔らかさ');
+  soft.add(y.physics, 'shapeStiffness', 0, 1, 0.005).name('形に戻る強さ（通常）');
+  soft.add(y.physics, 'hopStiffness', 0, 1, 0.005).name('形に戻る強さ（跳躍中）');
+  soft.add(y.physics, 'proneStiffness', 0, 1, 0.005).name('形に戻る強さ（腹ばい）');
+  soft.add(y.physics, 'supineStiffness', 0, 1, 0.005).name('形に戻る強さ（仰向け）');
+  soft.add(y.physics, 'upright', 0, 0.5, 0.005).name('姿勢を保つ強さ');
+  soft.add(y.physics, 'edgeCompliance', 0, 0.01, 0.0001).name('皮の伸びやすさ');
+  soft.add(y.physics, 'volumeCompliance', 0, 0.01, 0.0001).name('体積の変わりやすさ');
+  soft.add(y.physics, 'bounce', 0, 1, 0.01).name('弾み（跳ね返り）');
+  soft.add(y.physics, 'damping', 0, 5, 0.05).name('揺れの収まりやすさ');
+  soft.add(y.physics, 'friction', 0, 1, 0.01).name('地面の摩擦');
+  soft.add(y.physics, 'gravity', 0, 20, 0.1).name('重力');
+  soft.add(y.physics, 'substeps', 1, 30, 1).name('計算の細かさ');
+
+  const life = gui.addFolder('呼吸');
+  life.add(y.life, 'breath', 0, 0.1, 0.001).name('大きさ');
+  life.add(y.life, 'breathRate', 0.05, 1.5, 0.01).name('速さ');
+
+  const shape = gui.addFolder('体の形（静止時）');
+  const onShape = () => y.applyShape();
+  shape.add(y.shape, 'radius', 0.3, 0.8, 0.01).name('胴の大きさ(m)').onChange(onShape);
+  shape.add(y.shape, 'bodyLength', 0, 2, 0.01).name('胴の長さ').onChange(onShape);
+  shape.add(y.shape, 'headSize', 0.3, 1.1, 0.01).name('頭の大きさ').onChange(onShape);
+  shape.add(y.shape, 'headHeight', 0, 1.4, 0.01).name('頭の高さ').onChange(onShape);
+  shape.add(y.shape, 'headForward', -0.5, 1, 0.01).name('頭の前後位置').onChange(onShape);
+  shape.add(y.shape, 'rearSize', 0, 1.1, 0.01).name('後部の膨らみ').onChange(onShape);
+  shape.add(y.shape, 'rearBack', 0, 1.2, 0.01).name('後部：後ろへの位置').onChange(onShape);
+  shape.add(y.shape, 'rearHeight', -0.6, 0.6, 0.01).name('後部：高さ').onChange(onShape);
+  shape.add(y.shape, 'blend', 0.05, 1.5, 0.01).name('くびれのなさ').onChange(onShape);
+  shape.add(y.shape, 'width', 0.5, 1.8, 0.01).name('全体の幅').onChange(onShape);
+  shape.add(y.shape, 'heightScale', 0.4, 1.6, 0.01).name('全体の高さ').onChange(onShape);
+  shape.add(y.shape, 'length', 0.5, 2.4, 0.01).name('全体の奥行き').onChange(onShape);
+  shape.add(y.shape, 'bottomFlat', 0, 0.6, 0.01).name('下半分のつぶれ').onChange(onShape);
+  shape.add(y.shape, 'lean', -0.4, 0.4, 0.01).name('傾き').onChange(onShape);
+  shape.add(y.shape, 'leanAngle', -180, 180, 1).name('傾く方向').onChange(onShape);
+  shape.add(y.shape, 'faceSize', 0.5, 2, 0.01).name('顔の大きさ').onChange(onShape);
+  shape.add(y.shape, 'faceHeight', -1, 1, 0.01).name('顔の高さ').onChange(onShape);
+
+  const u = y.bodyMaterial.uniforms;
+  const shading = gui.addFolder('塗り');
+  const onColor = () => y.applyColors();
+  shading.addColor(y.colors, 'lit').name('明部').onChange(onColor);
+  shading.addColor(y.colors, 'shade').name('中間').onChange(onColor);
+  shading.addColor(y.colors, 'deep').name('暗部').onChange(onColor);
+  shading.addColor(y.colors, 'rim').name('縁の光').onChange(onColor);
+  shading.add(u.uThreshold, 'value', 0, 1, 0.01).name('明部の境界');
+  shading.add(u.uThreshold2, 'value', 0, 1, 0.01).name('暗部の境界');
+  shading.add(u.uSoftness, 'value', 0, 0.3, 0.005).name('境界のぼかし');
+  shading.add(u.uRim, 'value', 0, 1, 0.01).name('縁の光の強さ');
+  shading.add(u.uContactShade, 'value', 0, 0.4, 0.01).name('接地の暗さ');
+
+  const outline = gui.addFolder('輪郭線');
+  outline.add(y, 'outlineVisible').name('表示');
+  outline.add(y.outlineMaterial.uniforms.uWidth, 'value', 0, 8, 0.1).name('太さ(px)');
+  outline.addColor({ c: '#3b2618' }, 'c').name('色').onChange((c: string) => {
+    y.outlineMaterial.uniforms.uColor.value.set(c);
+  });
+
+  gui.add({
+    reset: () => {
+      const name = findPreset(presetState.id)?.name ?? '';
+      if (isOverridden(presetState.id) &&
+        !confirm(`「${name}」を初期設定に戻します。保存した値は消えます。よろしいですか？`)) return;
+      resetPreset(presetState.id);
+      Object.assign(y.life, DEFAULT_LIFE);
+      Object.assign(y.colors, DEFAULT_SKIN);
+      y.applyColors();
+      applyPreset(presetState.id);
+    },
+  }, 'reset').name('この体型を初期設定に戻す');
+
+  soft.close();
+  life.close();
+  shape.close();
+  shading.close();
+  outline.close();
+  // 各項目と各見出しにロックボタンを付ける（全項目を作り終えてから）
+  locks = new LockManager(gui);
+  return gui;
+}
+
+/** 選んだ体型の名前と説明を画面左上に表示する */
+function createPresetInfo(): { show: (name: string, text: string) => void } {
+  const el = document.createElement('div');
+  el.id = 'preset-info';
+  Object.assign(el.style, {
+    maxWidth: 'min(360px, calc(100vw - 280px))', boxSizing: 'border-box',
+    font: '12px/1.6 system-ui, sans-serif', color: '#6b5a4a', background: 'rgba(255,252,247,0.85)',
+    border: '1px solid #e3d8ca', borderRadius: '6px', padding: '6px 10px', pointerEvents: 'none',
+  } as Partial<CSSStyleDeclaration>);
+  leftColumn().appendChild(el);
+  return {
+    show(name, text) {
+      el.innerHTML = '';
+      const b = document.createElement('b');
+      b.textContent = name;
+      el.append(b, document.createElement('br'), text);
+    },
+  };
+}
+
+/** 画面左上の縦並びの置き場（体型の説明、その下に表情のパーツ選択画面） */
+function leftColumn(): HTMLElement {
+  let el = document.getElementById('left-column');
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = 'left-column';
+  Object.assign(el.style, {
+    position: 'fixed', left: '12px', top: '10px', bottom: '34px',
+    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '8px',
+    pointerEvents: 'none', zIndex: '1',
+  } as Partial<CSSStyleDeclaration>);
+  document.body.appendChild(el);
+  return el;
+}
