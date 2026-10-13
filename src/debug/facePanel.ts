@@ -120,7 +120,7 @@ export function createFacePanel(parent: HTMLElement, face: Face): void {
   refresh();
 }
 
-function makeRow(parent: HTMLElement, label: string, tip?: string): { label: HTMLElement; buttons: HTMLElement } {
+export function makeRow(parent: HTMLElement, label: string, tip?: string): { label: HTMLElement; buttons: HTMLElement } {
   const row = document.createElement('div');
   row.className = 'fp-row';
   const l = document.createElement('div');
@@ -136,7 +136,7 @@ function makeRow(parent: HTMLElement, label: string, tip?: string): { label: HTM
   return { label: l, buttons };
 }
 
-function makeButton(parent: HTMLElement, text: string): HTMLButtonElement {
+export function makeButton(parent: HTMLElement, text: string): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'fp-btn';
@@ -145,7 +145,7 @@ function makeButton(parent: HTMLElement, text: string): HTMLButtonElement {
   return b;
 }
 
-function injectStyle(): void {
+export function injectStyle(): void {
   if (document.getElementById('face-panel-style')) return;
   const style = document.createElement('style');
   style.id = 'face-panel-style';

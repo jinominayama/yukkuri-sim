@@ -21,6 +21,8 @@ export const DEFAULT_OUTFIT: OutfitParams = {
   hatTilt: 5,
   hatSide: 6,
   hairThickness: 0.035,
+  braidLength: 0.75,
+  hairParts: {},
 };
 
 interface Saved {
@@ -48,6 +50,7 @@ export class Outfit {
     this.fresh = stored === null || stored === undefined;
     this.characterId = saved.character ?? 'none';
     this.params = { ...DEFAULT_OUTFIT, ...saved.params };
+    this.params.hairParts = { ...this.params.hairParts };
     delete (this.params as unknown as Record<string, unknown>).hatHeight; // 旧版の調整値
     this.ctx = {
       geometry,
@@ -67,7 +70,12 @@ export class Outfit {
   /** キャラクターを切り替える（調整値はそのキャラクターの初期値に戻す） */
   setCharacter(id: string, resetParams = true): void {
     this.characterId = id;
-    if (resetParams) Object.assign(this.params, DEFAULT_OUTFIT, findCharacter(id).defaults);
+    if (resetParams) {
+      const d = findCharacter(id).defaults;
+      Object.assign(this.params, DEFAULT_OUTFIT, d);
+      // 入れ物ごと共有しないよう写す（選ぶと初期値まで書き換わってしまう）
+      this.params.hairParts = { ...d?.hairParts };
+    }
     this.create();
     this.save();
   }
@@ -99,6 +107,20 @@ export class Outfit {
     if (this.accessories.length === 0) return;
     this.refreshArrays();
     for (const a of this.accessories) a.update(this.ctx);
+  }
+
+  /** 髪型のパーツの今の選択（未選択なら先頭の選択肢） */
+  hairPart(part: string): string {
+    const def = this.character.hairParts?.find((p) => p.part === part);
+    const id = this.params.hairParts[part];
+    return def?.options.some((o) => o.id === id) ? id : (def?.options[0]?.id ?? '');
+  }
+
+  /** 髪型のパーツを選ぶ（髪を描き直して保存） */
+  setHairPart(part: string, id: string): void {
+    this.params.hairParts[part] = id;
+    for (const a of this.accessories) if (a instanceof HairShell) a.repaint();
+    this.save();
   }
 
   applyVisibility(): void {

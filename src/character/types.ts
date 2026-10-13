@@ -54,6 +54,19 @@ export interface OutfitParams {
   hatSide: number;
   /** 髪の厚み（頭の半径に対する比） */
   hairThickness: number;
+  /** 三つ編みの長さ（付け根から体の下端までに対する比。1 で下端まで）。三つ編みは簡易的な手としても使う */
+  braidLength: number;
+  /** 髪型のパーツごとの選択（パーツ → 選択肢の id）。パーツと選択肢はキャラクターごと（CharacterDef.hairParts） */
+  hairParts: Record<string, string>;
+}
+
+/** 髪型のパーツ（前髪・横髪など）と、その選択肢 */
+export interface HairPartDef {
+  part: string;
+  /** パーツ選択画面の行の名前 */
+  label: string;
+  /** 先頭が初期値 */
+  options: { id: string; name: string }[];
 }
 
 export interface CharacterDef {
@@ -62,6 +75,8 @@ export interface CharacterDef {
   name: string;
   /** 瞳の色（選んだときに顔に反映する） */
   iris?: string;
+  /** 髪型のパーツ（選べるもの）。なければ髪型は選べない */
+  hairParts?: HairPartDef[];
   /** このキャラクターに合う調整値の初期値 */
   defaults?: Partial<OutfitParams>;
   /** アクセサリーを作る */

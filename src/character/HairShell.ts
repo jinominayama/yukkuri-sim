@@ -38,8 +38,8 @@ export interface HairLayers {
 
 export interface HairStyle {
   colors: HairColors;
-  /** 顔座標（単位：頭の半径、y が上）に変換済みの3枚の層に髪を描く */
-  draw(layers: HairLayers): void;
+  /** 顔座標（単位：頭の半径、y が上）に変換済みの3枚の層に髪を描く。parts は髪型のパーツごとの選択 */
+  draw(layers: HairLayers, parts: Record<string, string>): void;
 }
 
 const vertexShader = /* glsl */ `
@@ -136,10 +136,10 @@ export class HairShell implements Accessory {
   readonly object = new THREE.Group();
   private readonly material: THREE.ShaderMaterial;
   private readonly outline: THREE.ShaderMaterial;
-  private readonly texture: THREE.DataTexture;
+  private texture: THREE.DataTexture;
 
-  constructor(ctx: AttachContext, style: HairStyle, private readonly params: OutfitParams) {
-    this.texture = paintHair(style);
+  constructor(ctx: AttachContext, private readonly style: HairStyle, private readonly params: OutfitParams) {
+    this.texture = paintHair(style, params.hairParts);
     const b = ctx.bodyMaterial.uniforms;
     const o = ctx.outlineMaterial.uniforms;
     const c = style.colors;
@@ -183,6 +183,15 @@ export class HairShell implements Accessory {
     }
   }
 
+  /** 髪型（パーツの選択）が変わったときに描き直す */
+  repaint(): void {
+    const old = this.texture;
+    this.texture = paintHair(this.style, this.params.hairParts);
+    this.material.uniforms.uHairTex.value = this.texture;
+    this.outline.uniforms.uHairTex.value = this.texture;
+    old.dispose();
+  }
+
   rebuild(ctx: AttachContext): void {
     const ix = ctx.index;
     this.material.uniforms.uFloor.value = ix.minY + (ix.maxY - ix.minY) * FLOOR;
@@ -203,7 +212,7 @@ export class HairShell implements Accessory {
 }
 
 /** 髪の形を3枚の層に描き、1枚のテクスチャ（r：線の濃さの逆、g：ツヤ、a：髪のある所）にまとめる */
-function paintHair(style: HairStyle): THREE.DataTexture {
+function paintHair(style: HairStyle, parts: Record<string, string>): THREE.DataTexture {
   const layer = () => {
     const c = document.createElement('canvas');
     c.width = TEX_W;
@@ -218,7 +227,7 @@ function paintHair(style: HairStyle): THREE.DataTexture {
     return ctx;
   };
   const layers: HairLayers = { mask: layer(), lines: layer(), light: layer() };
-  style.draw(layers);
+  style.draw(layers, parts);
   const mask = layers.mask.getImageData(0, 0, TEX_W, TEX_H).data;
   const lines = layers.lines.getImageData(0, 0, TEX_W, TEX_H).data;
   const light = layers.light.getImageData(0, 0, TEX_W, TEX_H).data;

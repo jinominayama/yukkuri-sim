@@ -1,3 +1,4 @@
+import { createHairPanel } from './hairPanel';
 import GUI from 'lil-gui';
 import { DEFAULT_LIFE, type Yukkuri } from '../yukkuri/Yukkuri';
 import { DEFAULT_SKIN } from '../render/toonMaterial';
@@ -83,6 +84,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(face.addColor(y.face.settings, 'iris').name('瞳の色').onChange(saveFace));
   noLock(face.add(y.face.settings, 'blink').name('まばたき').onChange(saveFace));
   createFacePanel(leftColumn(), y.face);
+  const hairPanel = createHairPanel(leftColumn(), y.outfit);
 
   // キャラクター（髪・帽子などの装飾）：体型とは別に管理する
   const chara = gui.addFolder('キャラクター');
@@ -95,6 +97,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       outfit.setCharacter(id);
       const iris = outfit.character.iris;
       if (iris) { y.face.settings.iris = iris; y.face.save(); }
+      hairPanel.rebuild();
       refresh();
     }));
   noLock(chara.add(outfit.params, 'showHair').name('髪').onChange(() => { outfit.applyVisibility(); saveOutfit(); }));
@@ -107,6 +110,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(chara.add(outfit.params, 'hatTilt', -30, 30, 1).name('帽子の前後の傾き').onChange(rebuildOutfit));
   noLock(chara.add(outfit.params, 'hatSide', -30, 30, 1).name('帽子の左右の傾き').onChange(rebuildOutfit));
   noLock(chara.add(outfit.params, 'hairThickness', 0, 0.1, 0.001).name('髪の厚み').onChange(rebuildOutfit));
+  noLock(chara.add(outfit.params, 'braidLength', 0.35, 1, 0.01).name('三つ編みの長さ').onChange(rebuildOutfit));
 
   const mv = gui.addFolder('移動（地面をクリックで目的地）');
   const status = { state: '' };

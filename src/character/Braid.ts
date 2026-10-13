@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { createAccessoryMaterial } from '../render/accessoryMaterial';
 import type { ToonColors } from '../render/toonMaterial';
 import { readVertex } from './FaceIndex';
-import { bowGeometries, ellipsoid, lathe, withOutline } from './shapes';
+import { bowGeometries, lathe, withOutline } from './shapes';
 import type { Accessory, AttachContext, OutfitParams } from './types';
 
 export interface BraidStyle {
@@ -26,8 +26,12 @@ export interface BraidStyle {
 
 /** 体の表面の道筋をたどる点の数 */
 const PATH = 14;
+/** 編み目の間隔（1つの長さに対する比。小さいほど深く重なる） */
+const LOBE_STEP = 0.42;
+/** 編み目の傾き（ラジアン） */
+const LOBE_TILT = 0.55;
 /** 編み目の数の上限（体型を変えても作り直さずに済むよう、多めに作って使う分だけ表示する） */
-const MAX_LOBES = 24;
+const MAX_LOBES = 40;
 
 /**
  * 三つ編み：体の表面に沿って垂れる編み目の列。編み目は左右に交互に傾いたふくらみで、
@@ -44,14 +48,18 @@ export class Braid implements Accessory {
   private readonly geometries: THREE.BufferGeometry[] = [];
   private headR = 1;
 
-  constructor(ctx: AttachContext, private readonly style: BraidStyle, _params: OutfitParams) {
+  constructor(ctx: AttachContext, private readonly style: BraidStyle, private readonly params: OutfitParams) {
     const hair = createAccessoryMaterial(ctx.bodyMaterial, style.hair, { rim: 0.2 });
     const bow = createAccessoryMaterial(ctx.bodyMaterial, style.bow, { doubleSide: true });
     this.materials.push(hair, bow);
     const ol = ctx.outlineMaterial;
-    // 編み目：単位の大きさの楕円体（置くときに大きさを合わせる）
-    // 編み目：横長の楕円体を斜めに傾けて交互に重ねる（菱形が組み合わさった見た目）
-    const lobe = ellipsoid(0.5, 0.5, 0.28, 14);
+    // 編み目：上が丸く下がとがった平たいしずく形（単位の大きさ。置くときに大きさを合わせる）。
+    // 左右交互に斜めに傾け、とがった先を中央の下へ向けて重ねると、V 字が連なる三つ編みの模様になる
+    const lobe = lathe([
+      [0.001, -0.62], [0.07, -0.6], [0.15, -0.44], [0.25, -0.16], [0.3, 0.08],
+      [0.27, 0.24], [0.17, 0.33], [0.001, 0.36],
+    ], 20);
+    lobe.scale(1, 1, 0.45);
     this.geometries.push(lobe);
     for (let i = 0; i < MAX_LOBES; i++) {
       const g = withOutline(lobe, hair, ol);
@@ -76,7 +84,10 @@ export class Braid implements Accessory {
     const ix = ctx.index;
     this.headR = ix.headR;
     const st = this.style;
-    const bottom = Math.min(st.top - 0.5, ix.lowestFy(st.fx, st.bottomMargin));
+    // 体の下端まで届く長さに、調整値の比を掛ける（短くても編み目2つ分は残す）
+    const full = Math.min(st.top - 0.5, ix.lowestFy(st.fx, st.bottomMargin));
+    const k = THREE.MathUtils.clamp(this.params.braidLength, 0, 1);
+    const bottom = Math.min(st.top - st.segment * 1.5, st.top + (full - st.top) * k);
     this.path = [];
     for (let i = 0; i < PATH; i++) {
       const fy = st.top + ((bottom - st.top) * i) / (PATH - 1);
@@ -128,19 +139,22 @@ export class Braid implements Accessory {
     const w = st.width * R;
     const seg = st.segment * R;
     const braidEnd = total * st.bowAt;
-    const count = Math.min(MAX_LOBES, Math.max(2, Math.round(braidEnd / (seg * 0.5))));
+    const count = Math.min(MAX_LOBES, Math.max(2, Math.round(braidEnd / (seg * LOBE_STEP))));
     this.lobes.forEach((g, i) => {
       g.visible = i < count;
       if (!g.visible) return;
       const d = ((i + 0.5) / count) * braidEnd;
-      // 下ほど少し細く。左右交互に傾ける
+      // 下ほど少し細く。左右交互に、とがった先が中央の下を向くよう傾ける
       const taper = 1 - 0.25 * (i / count);
       const s = i % 2 === 0 ? 1 : -1;
-      place(g, d, s * w * 0.18 * taper, new THREE.Vector3(w * 0.72 * taper, seg * taper, w * taper), s * 0.75);
+      place(g, d, s * w * 0.2 * taper, new THREE.Vector3(w * 1.05 * taper, seg * 1.45 * taper, w * taper), -s * LOBE_TILT);
+      // 下の編み目ほど手前（上の編み目の先に重なる）
+      g.translateZ(w * 0.04 * (i / count));
     });
     // リボンは三つ編みの流れる向き（数個前の編み目からの向き）に立てる。
     // 結び目のあたりは体の下へ回り込み始めるので、その場の向きだと下を向いてしまう
-    const b = st.bowSize * R;
+    // 短い三つ編みではリボンも少し小さく（編み目を覆ってしまわないように）
+    const b = st.bowSize * R * THREE.MathUtils.clamp(0.55 + 0.6 * this.params.braidLength, 0.7, 1);
     {
       const here = at(braidEnd);
       const before = at(Math.max(0, braidEnd - seg * 2.5));
