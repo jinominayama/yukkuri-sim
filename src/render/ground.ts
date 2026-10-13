@@ -12,6 +12,8 @@ export const GROUND_OUTLINE = GROUND_Y + 0.006;
 export const GROUND_CROWN = GROUND_Y + 0.012;
 /** 帽子のつば・フリル・リボン、三つ編みを止める高さ（円錐より上） */
 export const GROUND_ACCESSORY = GROUND_Y + 0.02;
+/** 帽子のフリルを止める高さ（地面に垂らしたつばの下面より上） */
+export const GROUND_FRILL = GROUND_Y + 0.045;
 
 /** GLSL：ワールド座標 wp を地面の上に止める。止めたときは法線 n を上向きにする */
 export function groundClampGlsl(height: number): string {

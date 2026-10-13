@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createAccessoryMaterial } from '../render/accessoryMaterial';
 import type { ToonColors } from '../render/toonMaterial';
-import { GROUND_CROWN } from '../render/ground';
+import { GROUND_ACCESSORY, GROUND_CROWN, GROUND_FRILL } from '../render/ground';
 import { readVertex } from './FaceIndex';
 import { bowGeometries, lathe, tubeAlong, withOutline } from './shapes';
 import type { Accessory, AttachContext, OutfitParams } from './types';
@@ -90,6 +90,7 @@ export class WitchHat implements Accessory {
     const B = st.brim;
     this.brimTop = brimTopAt(B);
     this.brimR = B;
+    // 断面の点：0〜4 が上面（BRIM_TOP_LAST まで）、5〜8 が下面。閉じるので点は BRIM_PROFILE 個
     const brim = lathe([
       [0.8, 0.02], [1.15, 0.035], [B * 0.8, 0.0], [B * 0.97, -0.09], [B, -0.12],
       [B * 0.985, -0.135], [B * 0.8, -0.03], [1.15, 0.0], [0.8, -0.01],
@@ -154,7 +155,10 @@ export class WitchHat implements Accessory {
     // つばの下のフリル：頭のまわりに垂れる波打った布
     if (st.frill) {
       this.frill = new Frill();
-      add(this.frill.geometry, trimBoth, false);
+      // 寝転がったとき、フリルはつばの頭側（上）にあるので、地面に垂らしたつばより上で止める
+      const frillMat = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { doubleSide: true, ground: GROUND_FRILL });
+      this.materials.push(frillMat);
+      add(this.frill.geometry, frillMat, false);
     }
   }
 
@@ -222,6 +226,36 @@ export class WitchHat implements Accessory {
       if (r > R) continue;
       const floor = this.brimTop(r) + FOLD_BRIM_CLEAR + extra;
       if (a[v + 1] < floor) a[v + 1] = floor;
+    }
+  }
+
+  /**
+   * 寝転がったとき、地面に近い側のつばを布のように垂らし、縁を地面に付ける。
+   * つばと地面の間の隙間から帽子の中（頭）が見えないように。
+   * 地面から DRAPE_HEIGHT より高い所は垂らさない（上側のつばは元の形）
+   */
+  private drapeBrim(a: Float32Array): void {
+    const e = this.object.matrix.elements;
+    // 帽子の座標で動かす向き：ワールドの高さが一番速く下がる向き
+    const gx = e[1], gy = e[5], gz = e[9];
+    const g2 = gx * gx + gy * gy + gz * gz;
+    const inner = DRAPE_FROM, outer = this.brimR;
+    for (let v = 0; v < a.length; v += 3) {
+      const x = a[v], y = a[v + 1], z = a[v + 2];
+      const r = Math.hypot(x, z);
+      // 上面（円錐の側。寝転がると地面を向く）は地面まで、下面はつばの厚みだけ上で止める
+      // （同じ高さに重なるとちらつく）
+      const j = (v / 3) % BRIM_PROFILE;
+      const floor = j <= BRIM_TOP_LAST || j === BRIM_PROFILE - 1 ? DRAPE_CLEAR : DRAPE_CLEAR + DRAPE_THICK;
+      const h = gx * x + gy * y + gz * z + e[13] - GROUND_ACCESSORY - floor;
+      if (h >= DRAPE_HEIGHT) continue;
+      // 外ほど、低いほどよく垂れる（縁の低い所はちょうど止める高さまで）。
+      // 止める高さより下にある所は、そこまで持ち上げる（上面と下面が同じ高さでつぶれないように）
+      const w = h <= 0 ? 1 : THREE.MathUtils.smoothstep(r, inner, outer) * (1 - THREE.MathUtils.smoothstep(h, 0, DRAPE_HEIGHT));
+      const k = (h * w) / g2;
+      a[v] = x - gx * k;
+      a[v + 1] = y - gy * k;
+      a[v + 2] = z - gz * k;
     }
   }
 
@@ -296,6 +330,46 @@ export class WitchHat implements Accessory {
     return { centers: P, rot: q, orig: c, up: upL, room };
   }
 
+  /**
+   * 静止形状で、円錐の根元を太らせる量が FIT_ALLOW 以下になるまで帽子を持ち上げる量（帽子の単位）。
+   * hair は髪の厚み（帽子の単位）
+   */
+  private liftToFit(rest: Float32Array, hair: number): number {
+    const inv = this.local.clone().invert();
+    const v = new THREE.Vector3();
+    const all: number[] = [];
+    for (let i = 0; i < rest.length; i += 3) {
+      v.set(rest[i], rest[i + 1], rest[i + 2]).applyMatrix4(inv);
+      // 帽子のまわりだけ（持ち上げる範囲の分だけ下まで見る）
+      if (v.y > -FIT_MAX_LIFT && Math.hypot(v.x, v.z) < 2.6) all.push(v.x, v.y, v.z);
+    }
+    const pts = Float32Array.from(all);
+    const n = pts.length / 3;
+    const moved = new Float32Array(pts.length);
+    const curve = this.crownCurve();
+    // 根元のあたり（帯の高さまで）で、どれだけ太らせる必要があるか
+    const need = (dy: number) => {
+      for (let j = 0; j < n; j++) {
+        moved[3 * j] = pts[3 * j];
+        moved[3 * j + 1] = pts[3 * j + 1] - dy;
+        moved[3 * j + 2] = pts[3 * j + 2];
+      }
+      const push = crownPush(moved, n, curve);
+      let m = 0;
+      for (let k = 0; k <= FIT_ROWS; k++) m = Math.max(m, push[k]);
+      return m + hair;
+    };
+    if (need(0) <= FIT_ALLOW) return 0;
+    let lo = 0, hi = FIT_MAX_LIFT;
+    if (need(hi) > FIT_ALLOW) return hi;
+    for (let k = 0; k < 14; k++) {
+      const mid = (lo + hi) / 2;
+      if (need(mid) > FIT_ALLOW) lo = mid;
+      else hi = mid;
+    }
+    return hi;
+  }
+
   rebuild(ctx: AttachContext): void {
     const ix = ctx.index;
     // 向きと大きさは決まった高さの4点で決める（位置の調整で大きさが変わらないように）。
@@ -317,11 +391,16 @@ export class WitchHat implements Accessory {
     const s = r0 * this.params.hatScale;
     // 位置の調整（かぶる所の半径が単位。x：右、y：上、z：前）
     const { hatX, hatY, hatZ } = this.params;
-    this.local.compose(
-      c.clone().add(new THREE.Vector3(hatX * r0, (0.06 + hatY) * r0, hatZ * r0)),
-      new THREE.Quaternion().setFromEuler(tilt),
-      new THREE.Vector3(s, s, s),
-    );
+    const quat = new THREE.Quaternion().setFromEuler(tilt);
+    const base = c.clone().add(new THREE.Vector3(hatX * r0, (0.06 + hatY) * r0, hatZ * r0));
+    this.local.compose(base, quat, new THREE.Vector3(s, s, s));
+    // 帽子が頭より小さいときは、頭が帽子の口に収まる高さまで持ち上げる（頭の上に載る）。
+    // 持ち上げないと、頭を避けるために円錐の根元がつばより太くなって形が崩れる
+    const lift = this.liftToFit(ix.rest, (ix.headR * this.params.hairThickness) / s);
+    if (lift > 0) {
+      base.addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(quat), lift * s);
+      this.local.compose(base, quat, new THREE.Vector3(s, s, s));
+    }
     // 当たり判定に使う頂点：静止形状で帽子のまわり（顔の下あたりから上）にあるもの
     const inv = this.local.clone().invert();
     const v = new THREE.Vector3();
@@ -373,6 +452,7 @@ export class WitchHat implements Accessory {
           const p = this.brimGeometry.getAttribute('position') as THREE.BufferAttribute;
           const a = p.array as Float32Array;
           a.set(this.brimBase);
+          if (fold) this.drapeBrim(a);
           grid?.pushOut(a, BODY_CLEAR);
           p.needsUpdate = true;
           this.brimGeometry.computeVertexNormals();
@@ -410,6 +490,23 @@ function cubic(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Ve
     .addScaledVector(c, 3 * u * t * t)
     .addScaledVector(d, t * t * t);
 }
+
+/** 帽子が頭より小さいとき：円錐の根元をこれ以上太らせないよう持ち上げる（帽子の単位。静止形状で測るので、動いている体より小さめに） */
+const FIT_ALLOW = 0.1;
+/** 同じく、見る段（根元から帯のあたりまで）と、持ち上げる量の上限（帽子の単位） */
+const FIT_ROWS = 6;
+const FIT_MAX_LIFT = 2;
+
+/** 寝転がったとき、つばを垂らす範囲：中心からこの半径より外（帽子の単位） */
+const DRAPE_FROM = 1.15;
+/** つばの断面の点の数（閉じた分を含む）と、上面の最後の点 */
+const BRIM_PROFILE = 10;
+const BRIM_TOP_LAST = 4;
+/** 垂らしたつばを止める高さ：上面は地面から DRAPE_CLEAR、下面はさらに DRAPE_THICK 上（ワールド） */
+const DRAPE_CLEAR = 0.002;
+const DRAPE_THICK = 0.012;
+/** 同じく、地面からこの高さ（ワールド）より低い所だけ垂らす */
+const DRAPE_HEIGHT = 0.6;
 
 /** リボンを帯の上へ持ち上げる量（帽子の単位） */
 const BOW_RAISE = 0.06;
