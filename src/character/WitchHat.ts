@@ -413,14 +413,20 @@ export class WitchHat implements Accessory {
       (-this.params.hatTilt * Math.PI) / 180, 0, (-this.params.hatSide * Math.PI) / 180, 'XZY',
     );
     const quat = new THREE.Quaternion().setFromEuler(tilt);
+    // 傾けるときは、頭の丸みの中心を軸に回す（帽子は頭に沿って低い側へずれ落ちる）。
+    // その場で回すと、低い側のつばの付け根が頭の横に当たり、まっすぐ上へ逃げて浮いてしまう
+    const flat = this.findSeat(shape, this.restInv, new THREE.Quaternion(), s, hair / s, hatX * u, hatZ * u, SEAT_ALLOW);
+    const pivot = roundCenter(section, flat, u);
+    const off = new THREE.Vector3(0, flat - pivot, 0).applyQuaternion(quat);
+    const x = hatX * u + off.x, z = hatZ * u + off.z;
     // かぶる高さ：頭（と髪）に当たらずに載る一番低い高さ（円錐の形と傾きを含めて探す）。
     // 口が頭より大きいときは 4点の高さより下げない（大きな帽子が顔まで沈まないように）。
     // 上下の調整値は、載った高さからのずらしとして足す（載る高さの探し方に打ち消されない）
-    const seat = Math.max(0, this.findSeat(shape, this.restInv, quat, s, hair / s, hatX * u, hatZ * u, SEAT_ALLOW));
+    const seat = Math.max(0, this.findSeat(shape, this.restInv, quat, s, hair / s, x, z, SEAT_ALLOW));
     // 下げられるのは、円錐の根元を太らせる量が上限 CROWN_PUSH_MAX に届く所まで（それより下げると頭にめり込む）
     let y = seat + hatY * u;
-    if (hatY < 0) y = Math.max(y, this.findSeat(shape, this.restInv, quat, s, hair / s, hatX * u, hatZ * u, CROWN_PUSH_MAX * 0.8));
-    const base = new THREE.Vector3(hatX * u, y, hatZ * u).applyMatrix4(m);
+    if (hatY < 0) y = Math.max(y, this.findSeat(shape, this.restInv, quat, s, hair / s, x, z, CROWN_PUSH_MAX * 0.8));
+    const base = new THREE.Vector3(x, y, z).applyMatrix4(m);
     // 静止形状の中で、帽子を4点の向きに立てて置く（傾きは調整値で加える）
     const frameQuat = new THREE.Quaternion().setFromRotationMatrix(m);
     this.local.compose(base, frameQuat.multiply(quat), new THREE.Vector3(s, s, s));
@@ -584,6 +590,21 @@ function headSection(rest: Float32Array, toFrame: THREE.Matrix4, headR: number):
     },
   };
 }
+/**
+ * 帽子を傾けるときの軸の高さ：かぶる高さ seat のあたりの頭の丸みを円とみなした中心。
+ * seat と、その ROUND_SPAN 下の 2 か所の太さから求める。u：頭の太さ（帽子の口の半径）
+ */
+function roundCenter(section: { at(h: number): number }, seat: number, u: number): number {
+  const h1 = seat, h2 = seat - ROUND_SPAN * u;
+  const r1 = section.at(h1), r2 = section.at(h2);
+  // 円 r² + (h - c)² = R² が 2 点を通る c
+  const c = (r1 * r1 - r2 * r2 + h1 * h1 - h2 * h2) / (2 * (h1 - h2));
+  return THREE.MathUtils.clamp(c, seat - ROUND_MAX * u, seat - ROUND_MIN * u);
+}
+const ROUND_SPAN = 0.5;
+/** 軸の深さの範囲（かぶる高さから下へ、頭の太さが単位）。平たい頭や細長い頭で極端にならないように */
+const ROUND_MIN = 0.3;
+const ROUND_MAX = 1.5;
 /** つばの下面の、上面からの深さ（帽子の単位。かぶる高さを探すときに使う） */
 const BRIM_UNDER = 0.04;
 /** かぶる高さを探すとき：円錐の根元（この段まで）を太らせてよい量（帽子の単位） */
