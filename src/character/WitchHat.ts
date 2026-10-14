@@ -59,6 +59,9 @@ export class WitchHat implements Accessory {
   private folded = false;
   /** 当たり判定に使う体の頂点（帽子のまわりにあるもの） */
   private near = new Int32Array(0);
+  /** あと何回の update で、落ち着いた体の形でかぶる高さを探し直すか（0 で済み） */
+  private reseatIn = 0;
+  private reseating = false;
   private local3 = new Float32Array(0);
   /** local3 の各点の法線（帽子の座標） */
   private localN = new Float32Array(0);
@@ -154,7 +157,7 @@ export class WitchHat implements Accessory {
 
     // つばの下のフリル：頭のまわりに垂れる波打った布
     if (st.frill) {
-      this.frill = new Frill();
+      this.frill = new Frill(this.brimTop, B);
       // 寝転がったとき、フリルはつばの頭側（上）にあるので、地面に垂らしたつばより上で止める
       const frillMat = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { doubleSide: true, ground: GROUND_FRILL });
       this.materials.push(frillMat);
@@ -331,40 +334,54 @@ export class WitchHat implements Accessory {
   }
 
   /**
-   * 静止形状で、円錐の根元を太らせる量が FIT_ALLOW 以下になるまで帽子を持ち上げる量（帽子の単位）。
-   * hair は髪の厚み（帽子の単位）
+   * 帽子が頭に当たらずに載る一番低い高さ（4点の向きの座標）。上から下へ下ろしていき、
+   * 円錐の根元を太らせる量が allow を超える手前で止める。
+   * toFrame：静止形状 → 4点の向きの座標、tilt：傾き、s：大きさ、hair：髪の厚み（帽子の単位）
    */
-  private liftToFit(rest: Float32Array, hair: number): number {
-    const inv = this.local.clone().invert();
+  private findSeat(
+    rest: Float32Array, toFrame: THREE.Matrix4, tilt: THREE.Quaternion, s: number, hair: number,
+    x: number, z: number, allow: number,
+  ): number {
+    let top = -Infinity;
+    const n = rest.length / 3;
+    const frame = new Float32Array(rest.length);
     const v = new THREE.Vector3();
-    const all: number[] = [];
-    for (let i = 0; i < rest.length; i += 3) {
-      v.set(rest[i], rest[i + 1], rest[i + 2]).applyMatrix4(inv);
-      // 帽子のまわりだけ（持ち上げる範囲の分だけ下まで見る）
-      if (v.y > -FIT_MAX_LIFT && Math.hypot(v.x, v.z) < 2.6) all.push(v.x, v.y, v.z);
+    for (let i = 0; i < n; i++) {
+      v.set(rest[3 * i], rest[3 * i + 1], rest[3 * i + 2]).applyMatrix4(toFrame);
+      frame[3 * i] = v.x; frame[3 * i + 1] = v.y; frame[3 * i + 2] = v.z;
+      if (v.y > top) top = v.y;
     }
-    const pts = Float32Array.from(all);
-    const n = pts.length / 3;
-    const moved = new Float32Array(pts.length);
+    const inv = tilt.clone().invert();
+    const pts = new Float32Array(rest.length);
     const curve = this.crownCurve();
-    // 根元のあたり（帯の高さまで）で、どれだけ太らせる必要があるか
-    const need = (dy: number) => {
-      for (let j = 0; j < n; j++) {
-        moved[3 * j] = pts[3 * j];
-        moved[3 * j + 1] = pts[3 * j + 1] - dy;
-        moved[3 * j + 2] = pts[3 * j + 2];
+    const need = (h: number) => {
+      for (let i = 0; i < n; i++) {
+        v.set(frame[3 * i] - x, frame[3 * i + 1] - h, frame[3 * i + 2] - z).applyQuaternion(inv).multiplyScalar(1 / s);
+        pts[3 * i] = v.x; pts[3 * i + 1] = v.y; pts[3 * i + 2] = v.z;
       }
-      const push = crownPush(moved, n, curve);
+      const push = crownPush(pts, n, curve);
       let m = 0;
-      for (let k = 0; k <= FIT_ROWS; k++) m = Math.max(m, push[k]);
+      for (let k = 0; k <= SEAT_ROWS; k++) m = Math.max(m, push[k]);
+      // つばの下に体（と髪）が入り込んでいたら載せられない（胴の長い体型で、頭の後ろの背中に当たる）
+      for (let i = 0; i < n; i++) {
+        const r = Math.hypot(pts[3 * i], pts[3 * i + 2]);
+        if (r < MOUTH || r > this.brimR) continue;
+        if (pts[3 * i + 1] + hair > this.brimTop(r) - BRIM_UNDER) return Infinity;
+      }
       return m + hair;
     };
-    if (need(0) <= FIT_ALLOW) return 0;
-    let lo = 0, hi = FIT_MAX_LIFT;
-    if (need(hi) > FIT_ALLOW) return hi;
-    for (let k = 0; k < 14; k++) {
+    // 体の一番高い所より上（傾いたつばの低い側も含めて、どこにも当たらない高さ）から下ろす
+    let hi = top + s * (this.brimR + 0.3);
+    const step = s * 0.1;
+    let lo = hi;
+    while (lo > top - s * 4) {
+      lo -= step;
+      if (need(lo) > allow) break;
+      hi = lo;
+    }
+    for (let k = 0; k < 10; k++) {
       const mid = (lo + hi) / 2;
-      if (need(mid) > FIT_ALLOW) lo = mid;
+      if (need(mid) > allow) lo = mid;
       else hi = mid;
     }
     return hi;
@@ -380,27 +397,33 @@ export class WitchHat implements Accessory {
     const m = frameOf(p[0], p[1], p[2], p[3]);
     this.restInv.copy(m).invert();
     this.restWidth = p[1].distanceTo(p[3]);
-    // かぶる所の半径：左右の半幅と、中心から前までの距離の平均
-    // （後ろの点は胴の長い体型では頭から離れるので使わない）
-    const c = new THREE.Vector3().setFromMatrixPosition(m);
-    const r0 = (p[1].distanceTo(p[3]) / 2 + Math.hypot(p[0].x - c.x, p[0].z - c.z)) / 2;
-    // 静止形状の中で、帽子をまっすぐ立てて置く（傾きは調整値で加える）
+    // 4点からは向きだけを取る。大きさとかぶる高さは、頭の輪切りの太さ（髪の厚みを含む）から決める
+    const hair = ix.headR * this.params.hairThickness;
+    // 体の今の形（重さで沈んだ形）を、静止形状の座標へ戻したもの。
+    // 静止形状のままだと、沈んで低くなる体型（扁平・いもむし）で頭とずれる
+    const shape = currentShape(ctx, this.anchors, this.restInv, this.restWidth);
+    const section = headSection(shape, this.restInv, ix.headR);
+    // 大きさ：4点の高さで、帽子の口がちょうど頭の太さになる大きさを 1 とする
+    const fit = (section.at(0) + hair) / MOUTH;
+    const s = fit * this.params.hatScale;
+    // 位置の調整（頭の太さが単位。x：右、y：上、z：前）
+    const u = fit * MOUTH;
+    const { hatX, hatY, hatZ } = this.params;
     const tilt = new THREE.Euler(
       (-this.params.hatTilt * Math.PI) / 180, 0, (-this.params.hatSide * Math.PI) / 180, 'XZY',
     );
-    const s = r0 * this.params.hatScale;
-    // 位置の調整（かぶる所の半径が単位。x：右、y：上、z：前）
-    const { hatX, hatY, hatZ } = this.params;
     const quat = new THREE.Quaternion().setFromEuler(tilt);
-    const base = c.clone().add(new THREE.Vector3(hatX * r0, (0.06 + hatY) * r0, hatZ * r0));
-    this.local.compose(base, quat, new THREE.Vector3(s, s, s));
-    // 帽子が頭より小さいときは、頭が帽子の口に収まる高さまで持ち上げる（頭の上に載る）。
-    // 持ち上げないと、頭を避けるために円錐の根元がつばより太くなって形が崩れる
-    const lift = this.liftToFit(ix.rest, (ix.headR * this.params.hairThickness) / s);
-    if (lift > 0) {
-      base.addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(quat), lift * s);
-      this.local.compose(base, quat, new THREE.Vector3(s, s, s));
-    }
+    // かぶる高さ：頭（と髪）に当たらずに載る一番低い高さ（円錐の形と傾きを含めて探す）。
+    // 口が頭より大きいときは 4点の高さより下げない（大きな帽子が顔まで沈まないように）。
+    // 上下の調整値は、載った高さからのずらしとして足す（載る高さの探し方に打ち消されない）
+    const seat = Math.max(0, this.findSeat(shape, this.restInv, quat, s, hair / s, hatX * u, hatZ * u, SEAT_ALLOW));
+    // 下げられるのは、円錐の根元を太らせる量が上限 CROWN_PUSH_MAX に届く所まで（それより下げると頭にめり込む）
+    let y = seat + hatY * u;
+    if (hatY < 0) y = Math.max(y, this.findSeat(shape, this.restInv, quat, s, hair / s, hatX * u, hatZ * u, CROWN_PUSH_MAX * 0.8));
+    const base = new THREE.Vector3(hatX * u, y, hatZ * u).applyMatrix4(m);
+    // 静止形状の中で、帽子を4点の向きに立てて置く（傾きは調整値で加える）
+    const frameQuat = new THREE.Quaternion().setFromRotationMatrix(m);
+    this.local.compose(base, frameQuat.multiply(quat), new THREE.Vector3(s, s, s));
     // 当たり判定に使う頂点：静止形状で帽子のまわり（顔の下あたりから上）にあるもの
     const inv = this.local.clone().invert();
     const v = new THREE.Vector3();
@@ -415,10 +438,18 @@ export class WitchHat implements Accessory {
     this.localN = new Float32Array(near.length * 3);
     this.crownPush.fill(-1); // 次の update で必ず当て直す
     this.frill?.invalidate();
+    // 体型を変えた直後は体がまだ揺れているので、落ち着いた頃にもう一度置き直す
+    if (!this.reseating) this.reseatIn = RESEAT_FRAMES;
     this.update(ctx);
   }
 
   update(ctx: AttachContext): void {
+    if (this.reseatIn > 0 && --this.reseatIn === 0) {
+      this.reseating = true;
+      this.rebuild(ctx);
+      this.reseating = false;
+      return;
+    }
     const p = this.anchors.map((i) => {
       const v = new THREE.Vector3();
       readVertex(ctx.pos, ctx.nrm, i, v);
@@ -491,11 +522,77 @@ function cubic(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Ve
     .addScaledVector(d, t * t * t);
 }
 
-/** 帽子が頭より小さいとき：円錐の根元をこれ以上太らせないよう持ち上げる（帽子の単位。静止形状で測るので、動いている体より小さめに） */
-const FIT_ALLOW = 0.1;
-/** 同じく、見る段（根元から帯のあたりまで）と、持ち上げる量の上限（帽子の単位） */
-const FIT_ROWS = 6;
-const FIT_MAX_LIFT = 2;
+/** 体型を変えてから、落ち着いた形で置き直すまでの update の回数 */
+const RESEAT_FRAMES = 45;
+
+/**
+ * 体の今の頂点を、帽子を載せる座標（静止形状の座標）へ戻す。update と同じ 4点の枠で戻すので、
+ * 戻した形の上に置いた帽子は、今の体の上にちょうど載る
+ */
+function currentShape(ctx: AttachContext, anchors: number[], restInv: THREE.Matrix4, restWidth: number): Float32Array {
+  const p = anchors.map((i) => {
+    const v = new THREE.Vector3();
+    readVertex(ctx.pos, ctx.nrm, i, v);
+    return v;
+  });
+  const cur = frameOf(p[0], p[1], p[2], p[3]);
+  const k = THREE.MathUtils.clamp(p[1].distanceTo(p[3]) / restWidth, 0.85, 1.25);
+  const grow = new THREE.Matrix4().makeScale(Math.sqrt(k), 1, Math.sqrt(k));
+  const back = cur.multiply(grow).multiply(restInv).invert();
+  const out = new Float32Array(ctx.pos.length);
+  const v = new THREE.Vector3();
+  for (let i = 0; i < out.length; i += 3) {
+    v.set(ctx.pos[i], ctx.pos[i + 1], ctx.pos[i + 2]).applyMatrix4(back);
+    out[i] = v.x; out[i + 1] = v.y; out[i + 2] = v.z;
+  }
+  return out;
+}
+
+/** 帽子の口の半径（帽子の単位。円錐の根元の内側とフリルの付け根のあいだ） */
+const MOUTH = 1.1;
+
+/**
+ * 頭の輪切りの太さ。静止形状の頂点を 4点の向きの座標（原点は 4点の高さ、y が上、z が前）へ移し、
+ * 高さごとに、前と左右（後ろは除く：胴の長い体型では頭から離れるため）の一番外の半径を測る。
+ *   at(h) … 高さ h の太さ
+ */
+function headSection(rest: Float32Array, toFrame: THREE.Matrix4, headR: number): { at(h: number): number } {
+  const v = new THREE.Vector3();
+  const pts: number[] = [];
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < rest.length; i += 3) {
+    v.set(rest[i], rest[i + 1], rest[i + 2]).applyMatrix4(toFrame);
+    // 後ろ（前から ±SECTION_ANGLE より外）は見ない
+    if (Math.abs(Math.atan2(v.x, v.z)) > SECTION_ANGLE) continue;
+    pts.push(v.y, Math.hypot(v.x, v.z));
+    lo = Math.min(lo, v.y);
+    hi = Math.max(hi, v.y);
+  }
+  const step = headR * 0.02;
+  const n = Math.max(1, Math.ceil((hi - lo) / step));
+  const bins = new Float32Array(n + 1);
+  for (let k = 0; k < pts.length; k += 2) {
+    const b = Math.round((pts[k] - lo) / step);
+    if (pts[k + 1] > bins[b]) bins[b] = pts[k + 1];
+  }
+  // 頂点の粗さで欠けないよう、隣の高さも見る
+  const R = Float32Array.from(bins, (_, b) => Math.max(bins[Math.max(0, b - 1)], bins[b], bins[Math.min(n, b + 1)]));
+  return {
+    at(h) {
+      const b = Math.min(n, Math.max(0, Math.round((h - lo) / step)));
+      return R[b];
+    },
+  };
+}
+/** つばの下面の、上面からの深さ（帽子の単位。かぶる高さを探すときに使う） */
+const BRIM_UNDER = 0.04;
+/** かぶる高さを探すとき：円錐の根元（この段まで）を太らせてよい量（帽子の単位） */
+const SEAT_ALLOW = 0.1;
+/** 円錐の根元を太らせる量の上限（帽子の単位。これ以上は形が崩れて見える） */
+const CROWN_PUSH_MAX = 0.3;
+const SEAT_ROWS = 8;
+/** 頭の輪切りで見る向き：前から左右へこの角度まで（ラジアン） */
+const SECTION_ANGLE = (110 * Math.PI) / 180;
 
 /** 寝転がったとき、つばを垂らす範囲：中心からこの半径より外（帽子の単位） */
 const DRAPE_FROM = 1.15;
@@ -593,6 +690,8 @@ function crownPush(pts: Float32Array, n: number, curve: (t: number) => THREE.Vec
   for (let k = N - 1; k >= 0; k--) {
     push[k] = Math.max(push[k], inner((k + 1) / N) + push[k + 1] - inner(k / N));
   }
+  // 太らせすぎると形が崩れるので上限で止める（動いて一時的に頭がふくらんだときなど）
+  for (let k = 0; k <= N; k++) push[k] = Math.min(push[k], CROWN_PUSH_MAX);
   return push;
 }
 
@@ -813,6 +912,11 @@ class Swell {
     this.geometry.computeBoundingSphere();
   }
 }
+/** 垂らせない所のフリル：つばの裏をどこまで外へ流すか（つばの半径に対する比）と、つばの上面からの深さ */
+const FRILL_TUCK_R = 0.9;
+const FRILL_TUCK_Y = 0.07;
+/** フリルを外へ広げる量の上限（帽子の単位。裾がつばの縁より外へ出ないくらい） */
+const FRILL_PUSH_MAX = 0.35;
 /** 円錐を広げたとき、頭・髪から離しておく隙間（帽子の単位） */
 const CROWN_GAP = 0.015;
 
@@ -832,7 +936,8 @@ class Frill {
   readonly geometry = new THREE.BufferGeometry();
   private last: Float32Array[] = [];
 
-  constructor() {
+  /** brimTop：つばの上面の高さ（中心からの距離 → y）、brimR：つばの外周の半径 */
+  constructor(private readonly brimTop: (r: number) => number, private readonly brimR: number) {
     const { SEG, ROWS } = Frill;
     this.geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array((ROWS + 1) * (SEG + 1) * 3), 3));
     const index: number[] = [];
@@ -846,17 +951,28 @@ class Frill {
     this.place(() => 0);
   }
 
-  /** 元の形。push(段, 列) だけ外へ広げる */
-  private place(push: (r: number, s: number) => number): void {
+  /** 元の形。push(段, 列) だけ外へ広げる。length(列) は段の数で数えた長さ（それより下の段はそこにまとめる） */
+  private place(push: (r: number, s: number) => number, length: (s: number) => number = () => Frill.ROWS): void {
     const { SEG, ROWS, WAVES } = Frill;
     const p = this.geometry.getAttribute('position') as THREE.BufferAttribute;
     for (let r = 0; r <= ROWS; r++) {
-      const v = r / ROWS;
       for (let s = 0; s <= SEG; s++) {
         const a = (s / SEG) * Math.PI * 2;
+        const L = length(s % SEG);
         // 根元はつばの裏（頭の少し外）、下へ広がって頭のまわりに垂れる
-        const rad = Frill.baseRad(v) + 0.07 * v * Math.sin(a * WAVES) + push(r, s % SEG);
-        const y = Frill.baseY(v) + 0.035 * v * Math.sin(a * WAVES * 0.5 + 1);
+        const v = Math.min(r, L) / ROWS;
+        let rad = Frill.baseRad(v) + push(r, s % SEG);
+        let y = Frill.baseY(v);
+        if (r > L) {
+          // 垂らせない所（頭に当たる所）は、裾をつばの裏に沿わせて外へ流し、縁からのぞかせる
+          const t = (r - L) / Math.max(1e-3, ROWS - L);
+          const out = Math.max(rad, this.brimR * FRILL_TUCK_R);
+          rad += (out - rad) * t;
+          y += (this.brimTop(rad) - FRILL_TUCK_Y - y) * t;
+        }
+        const w = r / ROWS; // 波は段の番号で（たくし上げた所も、垂れた所と同じだけ波打つ）
+        rad += 0.07 * w * Math.sin(a * WAVES);
+        y += 0.035 * w * Math.sin(a * WAVES * 0.5 + 1);
         p.setXYZ(r * (SEG + 1) + s, Math.sin(a) * rad, y, Math.cos(a) * rad);
       }
     }
@@ -908,18 +1024,34 @@ class Frill {
     for (let r = 1; r <= ROWS; r++) {
       for (let b = 0; b < BINS; b++) smooth[r][b] = Math.max(smooth[r][b], smooth[r - 1][b]);
     }
+    // 外へ広げるのは FRILL_PUSH_MAX まで。それ以上押し出す必要がある所は、その段から下を
+    // つばの裏に沿わせて外へ流す（頭の横幅が広い体型や、胴の長い体型で頭の後ろの背中に当たる所など）
+    const len = new Float32Array(BINS).fill(ROWS);
+    for (let b = 0; b < BINS; b++) {
+      for (let r = 0; r <= ROWS; r++) {
+        if (smooth[r][b] > FRILL_PUSH_MAX) { len[b] = Math.max(0, r - 1); break; }
+      }
+    }
+    // 長さは隣の角度となめらかにつなぐ（短い方に合わせる）
+    const lenS = Float32Array.from(len, (_, b) => {
+      let m = ROWS;
+      for (let k = -3; k <= 3; k++) m = Math.min(m, len[(b + k + BINS) % BINS] + Math.abs(k) * 0.5);
+      return m;
+    });
+    for (let r = 0; r <= ROWS; r++) for (let b = 0; b < BINS; b++) smooth[r][b] = Math.min(smooth[r][b], FRILL_PUSH_MAX);
+    const state = [...smooth, lenS];
     // 前と変わらなければ頂点を動かさない
     let change = this.last.length === 0 ? 1 : 0;
-    for (let r = 0; r <= ROWS && change < 0.002; r++) {
-      for (let b = 0; b < BINS; b++) change = Math.max(change, Math.abs(smooth[r][b] - this.last[r][b]));
+    for (let r = 0; r < state.length && change < 0.002; r++) {
+      for (let b = 0; b < BINS; b++) change = Math.max(change, Math.abs(state[r][b] - this.last[r][b]));
     }
     if (change < 0.002) return;
-    this.last = smooth;
-    this.place((r, s) => {
+    this.last = state;
+    const at = (row: Float32Array, s: number) => {
       const t = (s / SEG) * BINS - 0.5;
       const b0 = Math.floor(t), f = t - b0;
-      const row = smooth[r];
       return row[(b0 + BINS) % BINS] * (1 - f) + row[(b0 + 1) % BINS] * f;
-    });
+    };
+    this.place((r, s) => at(smooth[Math.min(r, Math.floor(at(lenS, s)))], s), (s) => at(lenS, s));
   }
 }
