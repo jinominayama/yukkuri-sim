@@ -40,6 +40,8 @@ const GETUP_CLEAR = 1.1;
 const MAX_ROLLS_ASIDE = 2;
 /** 起き上がるときに体がお尻の側へずれる量の見込み（胴の半径に対する比） */
 const GETUP_SHIFT = 1.6;
+/** 立ち止まってからこの時間（秒）たったら「落ち着いている」とみなす（跳ねた後の帽子の浮きなどが収まるまで） */
+const STILL_TIME = 1;
 
 export class Yukkuri {
   readonly root = new THREE.Group();
@@ -250,7 +252,8 @@ export class Yukkuri {
     } else {
       this.root.position.set(0, 0, 0);
     }
-    this.outfit.update();
+    // 立ち止まって落ち着いたかを渡す（三つ編みの編み目の数は、動いている間は変えない）
+    this.outfit.update(this.locomotion.idleTime > STILL_TIME);
     this.face.render();
 
     // 影：重心の真下。高く跳ぶほど小さく薄く

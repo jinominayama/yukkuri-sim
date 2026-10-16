@@ -297,6 +297,11 @@ export class Locomotion {
     return this.state === 'idle';
   }
 
+  /** 立って待機し続けている時間（秒）。待機していなければ 0 */
+  get idleTime(): number {
+    return this.state === 'idle' ? this.idleFor : 0;
+  }
+
   /** 横になり終えて止まっている（倒れ込み・寝返りの途中ではない）か */
   get resting(): boolean {
     return this.state === 'lying';

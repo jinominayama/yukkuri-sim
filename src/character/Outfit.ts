@@ -213,9 +213,10 @@ export class Outfit {
     return true;
   }
 
-  /** 描画の直前に呼ぶ（体の描画メッシュを更新した後） */
-  update(): void {
+  /** 描画の直前に呼ぶ（体の描画メッシュを更新した後）。still：立ち止まって落ち着いているか */
+  update(still = true): void {
     if (this.accessories.length === 0) return;
+    this.ctx.still = still;
     this.refreshArrays();
     // 帽子を先に（三つ編みが帽子の今の位置を見るので）
     for (const a of this.accessories) if (a instanceof WitchHat) a.update(this.ctx);

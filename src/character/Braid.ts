@@ -168,6 +168,8 @@ export class Braid implements Accessory {
   /** 編み目の間隔（道筋に沿った距離）。呼吸などの小さな伸び縮みにはゆっくりしか追従しない（-1 は未定） */
   private spacing = -1;
   private count = 0;
+  /** 編み目の数を、落ち着いているときに決めたか（決めるまでは仮の数で、毎回決め直す） */
+  private counted = false;
   /** 地面に沿わせ始める所（道筋に沿った距離）。小さな動きにはゆっくりしか追従しない（-1 は地面に届いていない） */
   private groundAt = -1;
   /** 点が帽子に隠れているか（帽子をかぶっているとき Outfit が設定する）。編み始めを帽子の外へ出すのに使う */
@@ -216,6 +218,7 @@ export class Braid implements Accessory {
     this.path = [];
     this.spacing = -1;
     this.count = 0;
+    this.counted = false;
     this.groundAt = -1;
     for (let i = 0; i < PATH; i++) {
       const fy = st.top + ((bottom - st.top) * i) / (PATH - 1);
@@ -223,6 +226,8 @@ export class Braid implements Accessory {
       this.path.push(ix.nearest(st.fx * (1 + 0.08 * (i / (PATH - 1))), fy));
     }
     this.update(ctx);
+    // 作り直した直後の数は仮のもの（帽子がまだ載り直していないことがある）。落ち着いたときに決める
+    this.counted = false;
   }
 
   update(ctx: AttachContext): void {
@@ -283,10 +288,17 @@ export class Braid implements Accessory {
     // 編み目の数と間隔：道筋の長さから決めるが、呼吸で体がふくらむたびに三つ編みが伸び縮みしないよう、
     // 間隔はゆっくり追従させる（体型を変えたときなど大きく変わったときはすぐ合わせる）
     const target = total * st.bowAt;
-    // 数は境目で行ったり来たりしないよう、今の数から COUNT_KEEP 以上離れたときだけ変える
-    const raw = target / (seg * LOBE_STEP);
-    const count = Math.min(MAX_LOBES, Math.max(2,
-      this.count > 0 && this.spacing > 0 && Math.abs(raw - this.count) < COUNT_KEEP ? this.count : Math.round(raw)));
+    // 数は立ち止まって落ち着いているときだけ決め直す。動いている間（這う・跳ねるなどで体が伸び縮みし、
+    // 頭が前に出たり帽子が浮いたりして帽子に隠れる所も変わる）は数を保ち、間隔だけを合わせる。
+    // 境目で行ったり来たりしないよう、今の数から COUNT_KEEP 以上離れたときだけ変える
+    // 作り直した直後（帽子が載り終わる前など）は仮の数として、落ち着くまで毎回決め直す
+    let count = this.count;
+    const still = ctx.still !== false;
+    if (!this.counted || still) {
+      const raw = target / (seg * LOBE_STEP);
+      if (!this.counted || Math.abs(raw - count) >= COUNT_KEEP) count = Math.min(MAX_LOBES, Math.max(2, Math.round(raw)));
+      if (still) this.counted = true;
+    }
     const want = target / count;
     if (this.spacing < 0 || count !== this.count || Math.abs(want - this.spacing) > want * SPACING_SNAP) this.spacing = want;
     else this.spacing += (want - this.spacing) * SPACING_FOLLOW;

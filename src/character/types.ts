@@ -23,6 +23,8 @@ export interface AttachContext {
   nrm: Float32Array;
   /** 静止形状の頂点を顔座標で引く索引 */
   index: FaceIndex;
+  /** 立ち止まって落ち着いているか（false のときは、動きで変わる長さから数などを決め直さない）。未設定は true 扱い */
+  still?: boolean;
   /** 体の塗り（光の向きなどを共有する） */
   bodyMaterial: THREE.ShaderMaterial;
   /** 輪郭線の材質（共有。画面上で一定の太さ） */
