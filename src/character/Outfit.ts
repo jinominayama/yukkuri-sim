@@ -25,9 +25,15 @@ export const DEFAULT_OUTFIT: OutfitParams = {
   hairParts: {},
 };
 
+/** 体型ごとに別々に持つ調整値（帽子の大きさ・位置・傾き、髪の厚み、三つ編みの長さ） */
+const FIT_KEYS = ['hatScale', 'hatX', 'hatY', 'hatZ', 'hatTilt', 'hatSide', 'hairThickness', 'braidLength'] as const;
+type Fit = Pick<OutfitParams, (typeof FIT_KEYS)[number]>;
+
 interface Saved {
   character: string;
   params: OutfitParams;
+  /** 体型 ID → その体型の調整値（初期値のままの体型は持たない） */
+  fits?: Record<string, Fit>;
 }
 
 /**
@@ -41,6 +47,12 @@ export class Outfit {
   /** 保存された設定がなかった（初めて開いた） */
   readonly fresh: boolean;
   private accessories: Accessory[] = [];
+  /** 体型 ID → 調整値（初期値から変えた体型だけ） */
+  private fits: Record<string, Fit>;
+  /** 今の体型（調整値をどの体型のものとして読み書きするか） */
+  private presetId = '';
+  /** 体型ごとに持つ前の版で保存した調整値（最初に使う体型に引き継ぐ） */
+  private legacyFit: Fit | null = null;
   private readonly index = new FaceIndex();
   private readonly ctx: AttachContext;
 
@@ -52,6 +64,8 @@ export class Outfit {
     this.params = { ...DEFAULT_OUTFIT, ...saved.params };
     this.params.hairParts = { ...this.params.hairParts };
     delete (this.params as unknown as Record<string, unknown>).hatHeight; // 旧版の調整値
+    this.fits = { ...saved.fits };
+    if (!saved.fits && saved.params) this.legacyFit = pickFit(this.params);
     this.ctx = {
       geometry,
       pos: geometry.getAttribute('position').array as Float32Array,
@@ -75,9 +89,43 @@ export class Outfit {
       Object.assign(this.params, DEFAULT_OUTFIT, d);
       // 入れ物ごと共有しないよう写す（選ぶと初期値まで書き換わってしまう）
       this.params.hairParts = { ...d?.hairParts };
+      this.fits = {};
+      this.legacyFit = null;
     }
     this.create();
     this.save();
+  }
+
+  /**
+   * 体型を切り替える：体型ごとの調整値を、その体型で保存したもの（なければキャラクターの初期値）にする。
+   * 付け直しは呼び出し側で（体型を置き直すときに一緒に行われる）
+   */
+  usePreset(id: string): void {
+    this.presetId = id;
+    const fit = this.legacyFit ?? this.fits[id];
+    this.legacyFit = null;
+    Object.assign(this.params, this.fitDefaults(), fit);
+    this.save();
+  }
+
+  /** 今の体型の調整値（帽子・髪の厚み・三つ編みの長さ）を、キャラクターの初期値に戻す。付け直しは呼び出し側で */
+  resetFit(): void {
+    delete this.fits[this.presetId];
+    Object.assign(this.params, this.fitDefaults());
+    this.save();
+  }
+
+  /** 今の体型ごとの調整値を、別の体型（ユーザー設定など）にも写す */
+  copyFitTo(id: string): void {
+    if (id === this.presetId) return;
+    const fit = pickFit(this.params);
+    if (sameFit(fit, this.fitDefaults())) delete this.fits[id];
+    else this.fits[id] = fit;
+    this.save();
+  }
+
+  private fitDefaults(): Fit {
+    return pickFit({ ...DEFAULT_OUTFIT, ...this.character.defaults });
   }
 
   /** アクセサリーを作り直す */
@@ -132,7 +180,12 @@ export class Outfit {
   }
 
   save(): void {
-    saveJSON(STORAGE_KEY, { character: this.characterId, params: this.params } satisfies Saved);
+    if (this.presetId) {
+      const fit = pickFit(this.params);
+      if (sameFit(fit, this.fitDefaults())) delete this.fits[this.presetId];
+      else this.fits[this.presetId] = fit;
+    }
+    saveJSON(STORAGE_KEY, { character: this.characterId, params: this.params, fits: this.fits } satisfies Saved);
   }
 
   private refreshArrays(): void {
@@ -140,4 +193,12 @@ export class Outfit {
     this.ctx.pos = g.getAttribute('position').array as Float32Array;
     this.ctx.nrm = (g.getAttribute('normal')?.array as Float32Array) ?? new Float32Array(this.ctx.pos.length);
   }
+}
+
+function pickFit(p: OutfitParams): Fit {
+  return Object.fromEntries(FIT_KEYS.map((k) => [k, p[k]])) as Fit;
+}
+
+function sameFit(a: Fit, b: Fit): boolean {
+  return FIT_KEYS.every((k) => Math.abs(a[k] - b[k]) < 1e-9);
 }

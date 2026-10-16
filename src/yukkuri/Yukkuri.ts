@@ -84,6 +84,7 @@ export class Yukkuri {
 
     this.outfit = new Outfit(render.geometry, this.bodyMaterial, this.outlineMaterial);
     this.root.add(this.outfit.object);
+    this.outfit.usePreset(this.presetId);
 
     this.locomotion = new Locomotion(this.body, this.move);
     this.applyShape();
@@ -121,6 +122,7 @@ export class Yukkuri {
     Object.assign(this.physics, p.physics);
     Object.assign(this.move, p.move);
     this.presetId = p.id;
+    this.outfit.usePreset(p.id); // 帽子・髪の厚み・三つ編みの長さは体型ごと
     this.locomotion.reset();
     this.applyShape();
     this.drop(0.02);

@@ -60,6 +60,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       if (presetState.id !== USER_PRESET_ID &&
         !confirm(`現在の値（${from}）でユーザー設定を上書きします。ユーザー設定に保存していた値は消えます。よろしいですか？`)) return;
       const ok = savePreset(USER_PRESET_ID, y);
+      if (ok) y.outfit.copyFitTo(USER_PRESET_ID); // 帽子・髪の厚み・三つ編みの長さも一緒に写す
       showInfo(presetState.id, ok ? `現在の値（${from}）をユーザー設定に上書きしました。` : '保存できませんでした（保存領域が使えません）。');
     },
   }, 'f').name('現在の値をユーザー設定に上書き');
@@ -86,7 +87,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   createFacePanel(leftColumn(), y.face);
   const hairPanel = createHairPanel(leftColumn(), y.outfit);
 
-  // キャラクター（髪・帽子などの装飾）：体型とは別に管理する
+  // キャラクター（髪・帽子などの装飾）：体型とは別に管理する。ただし帽子の大きさ・位置・傾き、髪の厚み、三つ編みの長さは体型ごと
   const chara = gui.addFolder('キャラクター');
   const outfit = y.outfit;
   const charState = { id: outfit.characterId };
@@ -205,6 +206,8 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       Object.assign(y.life, DEFAULT_LIFE);
       Object.assign(y.colors, DEFAULT_SKIN);
       y.applyColors();
+      // この体型の帽子・髪の厚み・三つ編みの長さも戻す（付け直しは体型を置き直すときに一緒に行われる）
+      y.outfit.resetFit();
       applyPreset(presetState.id);
     },
   }, 'reset').name('この体型を初期設定に戻す');
