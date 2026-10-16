@@ -92,7 +92,11 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   const outfit = y.outfit;
   const charState = { id: outfit.characterId };
   const saveOutfit = () => outfit.save();
-  const rebuildOutfit = () => { outfit.rebuild(); outfit.save(); };
+  const rebuildOutfit = () => {
+    outfit.rebuild();
+    if (outfit.applyLimits()) refresh(); // 帽子の傾きが体型の制限で止まったら、スライダーもそこへ戻す
+    outfit.save();
+  };
   noLock(chara.add(charState, 'id', Object.fromEntries(CHARACTERS.map((c) => [c.name, c.id]))).name('キャラクター')
     .onChange((id: string) => {
       outfit.setCharacter(id);

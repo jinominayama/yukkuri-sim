@@ -61,6 +61,8 @@ export class WitchHat implements Accessory {
   private near = new Int32Array(0);
   /** あと何回の update で、落ち着いた体の形でかぶる高さを探し直すか（0 で済み） */
   private reseatIn = 0;
+  /** 実際に使った前後の傾き（制限で調整値より小さくなることがある） */
+  tiltUsed = 0;
   private reseating = false;
   private local3 = new Float32Array(0);
   /** local3 の各点の法線（帽子の座標） */
@@ -359,7 +361,9 @@ export class WitchHat implements Accessory {
         v.set(frame[3 * i] - x, frame[3 * i + 1] - h, frame[3 * i + 2] - z).applyQuaternion(inv).multiplyScalar(1 / s);
         pts[3 * i] = v.x; pts[3 * i + 1] = v.y; pts[3 * i + 2] = v.z;
       }
-      const push = crownPush(pts, n, curve);
+      // 髪の厚みは、頭の点を外へ厚くして当てる（当たっていない所まで厚みの分を数えないように。
+      // 数えると、厚みが SEAT_ALLOW を超えたとたん、どの高さでも載らないことになって帽子が飛んでいく）
+      const push = crownPush(pts, n, curve, hair);
       let m = 0;
       for (let k = 0; k <= SEAT_ROWS; k++) m = Math.max(m, push[k]);
       // つばの下に体（と髪）が入り込んでいたら載せられない（胴の長い体型で、頭の後ろの背中に当たる）
@@ -368,7 +372,7 @@ export class WitchHat implements Accessory {
         if (r < MOUTH || r > this.brimR) continue;
         if (pts[3 * i + 1] + hair > this.brimTop(r) - BRIM_UNDER) return Infinity;
       }
-      return m + hair;
+      return m;
     };
     // 体の一番高い所より上（傾いたつばの低い側も含めて、どこにも当たらない高さ）から下ろす
     let hi = top + s * (this.brimR + 0.3);
@@ -409,20 +413,42 @@ export class WitchHat implements Accessory {
     // 位置の調整（頭の太さが単位。x：右、y：上、z：前）
     const u = fit * MOUTH;
     const { hatX, hatY, hatZ } = this.params;
-    const tilt = new THREE.Euler(
-      (-this.params.hatTilt * Math.PI) / 180, 0, (-this.params.hatSide * Math.PI) / 180, 'XZY',
-    );
-    const quat = new THREE.Quaternion().setFromEuler(tilt);
     // 傾けるときは、頭の丸みの中心を軸に回す（帽子は頭に沿って低い側へずれ落ちる）。
     // その場で回すと、低い側のつばの付け根が頭の横に当たり、まっすぐ上へ逃げて浮いてしまう
     const flat = this.findSeat(shape, this.restInv, new THREE.Quaternion(), s, hair / s, hatX * u, hatZ * u, SEAT_ALLOW);
     const pivot = roundCenter(section, flat, u);
-    const off = new THREE.Vector3(0, flat - pivot, 0).applyQuaternion(quat);
-    const x = hatX * u + off.x, z = hatZ * u + off.z;
-    // かぶる高さ：頭（と髪）に当たらずに載る一番低い高さ（円錐の形と傾きを含めて探す）。
+    /**
+     * 前後の傾き tiltDeg で置いたとき。seat：かぶる高さ（頭（と髪）に当たらずに載る一番低い高さ。
+     * 円錐の形と傾きを含めて探す）、float：頭の丸みに沿って回しただけの高さより、どれだけ浮いたか（頭の太さが単位）
+     */
+    const tilted = (tiltDeg: number) => {
+      const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+        (-tiltDeg * Math.PI) / 180, 0, (-this.params.hatSide * Math.PI) / 180, 'XZY',
+      ));
+      const off = new THREE.Vector3(0, flat - pivot, 0).applyQuaternion(quat);
+      const x = hatX * u + off.x, z = hatZ * u + off.z;
+      const seat = Math.max(0, this.findSeat(shape, this.restInv, quat, s, hair / s, x, z, SEAT_ALLOW));
+      return { quat, x, z, seat, float: (seat - (pivot + off.y)) / u };
+    };
+    // 前後の傾きの制限：つばが頭以外（胴の長い体型で、頭の後ろに続く背中など）に当たって
+    // 帽子が浮いてしまう角度までは傾けない（調整値はそのまま。画面で動かしたときに調整値も戻すのは tiltUsed を見て）
+    let at = tilted(this.params.hatTilt);
+    this.tiltUsed = this.params.hatTilt;
+    // 浮きは、傾けていないときより増えた分で見る（平たい頭は、丸みに沿って回すだけでも少し浮くので）
+    const lim = this.params.hatTilt !== 0 && at.float > TILT_FLOAT_MAX ? tilted(0).float + TILT_FLOAT_MAX : Infinity;
+    if (at.float > lim) {
+      let ok = 0, ng = this.params.hatTilt;
+      for (let k = 0; k < 5; k++) {
+        const mid = (ok + ng) / 2;
+        if (tilted(mid).float > lim) ng = mid;
+        else ok = mid;
+      }
+      this.tiltUsed = Math.trunc(ok);
+      at = tilted(this.tiltUsed);
+    }
+    const { quat, x, z, seat } = at;
     // 口が頭より大きいときは 4点の高さより下げない（大きな帽子が顔まで沈まないように）。
     // 上下の調整値は、載った高さからのずらしとして足す（載る高さの探し方に打ち消されない）
-    const seat = Math.max(0, this.findSeat(shape, this.restInv, quat, s, hair / s, x, z, SEAT_ALLOW));
     // 下げられるのは、円錐の根元を太らせる量が上限 CROWN_PUSH_MAX に届く所まで（それより下げると頭にめり込む）
     let y = seat + hatY * u;
     if (hatY < 0) y = Math.max(y, this.findSeat(shape, this.restInv, quat, s, hair / s, x, z, CROWN_PUSH_MAX * 0.8));
@@ -602,6 +628,8 @@ function roundCenter(section: { at(h: number): number }, seat: number, u: number
   return THREE.MathUtils.clamp(c, seat - ROUND_MAX * u, seat - ROUND_MIN * u);
 }
 const ROUND_SPAN = 0.5;
+/** 前後に傾けたとき、傾けていないときよりこれ以上浮く角度までは傾けない（頭の太さが単位） */
+const TILT_FLOAT_MAX = 0.3;
 /** 軸の深さの範囲（かぶる高さから下へ、頭の太さが単位）。平たい頭や細長い頭で極端にならないように */
 const ROUND_MIN = 0.3;
 const ROUND_MAX = 1.5;
@@ -679,7 +707,7 @@ const CROWN_N = 40;
  * 円錐の各段をどれだけ太らせるか。pts は帽子の中の座標の点（髪の表面）。
  * 円錐は後ろへ傾いて曲がるので、各段の輪切りの面（中心線に垂直）に沿って測る
  */
-function crownPush(pts: Float32Array, n: number, curve: (t: number) => THREE.Vector3): Float32Array {
+function crownPush(pts: Float32Array, n: number, curve: (t: number) => THREE.Vector3, pad = 0): Float32Array {
   const N = CROWN_N;
   // 円錐の元の太さ（波の一番内側）
   const inner = (t: number) => 1.15 * Math.pow(1 - t, 0.8) * (1 - CROWN_WAVE) + 0.005;
@@ -703,8 +731,8 @@ function crownPush(pts: Float32Array, n: number, curve: (t: number) => THREE.Vec
       if (rad > need[k] && rad < lim[k]) need[k] = rad;
     }
   }
-  // 波の一番内側が「髪の表面 + 隙間」に届くまで
-  const raw = Float32Array.from(need, (R, k) => (R > 0 ? Math.max(0, R + CROWN_GAP - inner(k / N)) : 0));
+  // 波の一番内側が「髪の表面 + 隙間」に届くまで（pad：点を外へ厚くして見る量。頭の表面の点に髪の厚みを足すとき）
+  const raw = Float32Array.from(need, (R, k) => (R > 0 ? Math.max(0, R + pad + CROWN_GAP - inner(k / N)) : 0));
   // 測った段の間で足りなくならないよう、隣の段も見る
   const push = Float32Array.from(raw, (_, k) => Math.max(raw[Math.max(0, k - 1)], raw[k], raw[Math.min(N, k + 1)]));
   // 半径（元の太さ + 押し出し）が上の段より細くならないよう、下の段を広げる

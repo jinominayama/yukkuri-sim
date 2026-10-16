@@ -128,6 +128,17 @@ export class Outfit {
     return pickFit({ ...DEFAULT_OUTFIT, ...this.character.defaults });
   }
 
+  /**
+   * 体型に合わせて制限した調整値（帽子の前後の傾き）を、調整値そのものにも反映する。
+   * 画面で動かしたとき用（スライダーが制限の所で止まる）。変わったら true
+   */
+  applyLimits(): boolean {
+    const hat = this.accessories.find((a): a is WitchHat => a instanceof WitchHat);
+    if (!hat || hat.tiltUsed === this.params.hatTilt) return false;
+    this.params.hatTilt = hat.tiltUsed;
+    return true;
+  }
+
   /** アクセサリーを作り直す */
   create(): void {
     for (const a of this.accessories) {
