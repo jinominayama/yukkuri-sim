@@ -36,7 +36,6 @@ export class WitchHat implements Accessory {
   private anchors = [0, 0, 0, 0]; // 前・右・後ろ・左
   private readonly restInv = new THREE.Matrix4();
   private readonly local = new THREE.Matrix4();
-  private restWidth = 1;
   private readonly materials: THREE.Material[] = [];
   private readonly geometries: THREE.BufferGeometry[] = [];
   private frill: Frill | null = null;
@@ -63,6 +62,9 @@ export class WitchHat implements Accessory {
   private near = new Int32Array(0);
   /** あと何回の update で、落ち着いた体の形でかぶる高さを探し直すか（0 で済み） */
   private reseatIn = 0;
+  /** 動いて頭が食い込んだときに帽子を持ち上げている量（帽子の単位）と、かぶったときの円錐の根元の太らせ量（-1 は未測定） */
+  private lift = 0;
+  private basePush = -1;
   /** 実際に使った前後の傾き（制限で調整値より小さくなることがある） */
   tiltUsed = 0;
   private reseating = false;
@@ -213,13 +215,29 @@ export class WitchHat implements Accessory {
       this.localN[3 * j + 1] = ny / l;
       this.localN[3 * j + 2] = nz / l;
     }
-    this.frill?.fit(pts, n);
     const push = crownPush(pts, n, this.crownCurve());
+    this.follow(push);
+    this.frill?.fit(pts, n);
     let change = 0;
     for (let k = 0; k <= CROWN_N; k++) change = Math.max(change, Math.abs(push[k] - this.crownPush[k]));
     if (change < 0.002) return;
     this.crownPush = push;
     this.crownDirty = true;
+  }
+
+  /**
+   * 動いて頭が帽子に食い込んだら、帽子を持ち上げる量 lift を増やす（次のフレームから効く）。
+   * 食い込んでいなければゆっくり戻す。食い込みは円錐の根元を太らせる量で測り、
+   * かぶったときの量（basePush）より LIFT_SLACK 以上増えた分を食い込みとみなす。寝転がって折れているときは持ち上げない
+   */
+  private follow(push: Float32Array): void {
+    let m = 0;
+    for (let k = 0; k <= SEAT_ROWS; k++) m = Math.max(m, push[k]);
+    if (this.basePush < 0) this.basePush = m;
+    const over = m - Math.max(this.basePush, SEAT_ALLOW) - LIFT_SLACK;
+    if (this.folded) this.lift = Math.max(0, this.lift - LIFT_DROP * 4);
+    else if (over > 0) this.lift = Math.min(LIFT_MAX, this.lift + over * LIFT_GAIN);
+    else if (over < -LIFT_SLACK) this.lift = Math.max(0, this.lift - LIFT_DROP);
   }
 
   /**
@@ -402,12 +420,11 @@ export class WitchHat implements Accessory {
     const p = this.anchors.map((i) => ix.restPoint(i));
     const m = frameOf(p[0], p[1], p[2], p[3]);
     this.restInv.copy(m).invert();
-    this.restWidth = p[1].distanceTo(p[3]);
     // 4点からは向きだけを取る。大きさとかぶる高さは、頭の輪切りの太さ（髪の厚みを含む）から決める
     const hair = ix.headR * this.params.hairThickness;
     // 体の今の形（重さで沈んだ形）を、静止形状の座標へ戻したもの。
     // 静止形状のままだと、沈んで低くなる体型（扁平・いもむし）で頭とずれる
-    const shape = currentShape(ctx, this.anchors, this.restInv, this.restWidth);
+    const shape = currentShape(ctx, this.anchors, this.restInv);
     const section = headSection(shape, this.restInv, ix.headR);
     // 大きさ：4点の高さで、帽子の口がちょうど頭の太さになる大きさを 1 とする
     const fit = (section.at(0) + hair) / MOUTH;
@@ -471,6 +488,8 @@ export class WitchHat implements Accessory {
     this.local3 = new Float32Array(near.length * 3);
     this.localN = new Float32Array(near.length * 3);
     this.crownPush.fill(-1); // 次の update で必ず当て直す
+    this.lift = 0;
+    this.basePush = -1;
     this.frill?.invalidate();
     // 体型を変えた直後は体がまだ揺れているので、落ち着いた頃にもう一度置き直す
     if (!this.reseating) this.reseatIn = RESEAT_FRAMES;
@@ -506,11 +525,11 @@ export class WitchHat implements Accessory {
       readVertex(ctx.pos, ctx.nrm, i, v);
       return v;
     });
+    // 帽子は形を変えずに頭について行く（体の幅に合わせて広げたり縮めたりすると、跳ねるたびに伸び縮みして見える）。
+    // 頭が帽子に食い込んだ分は、円錐を太らせる代わりに帽子ごと持ち上げる（lift）
     const cur = frameOf(p[0], p[1], p[2], p[3]);
-    // 横に広がったら少しだけ大きく（つぶれた体に帽子が沈み込まないように）
-    const k = THREE.MathUtils.clamp(p[1].distanceTo(p[3]) / this.restWidth, 0.85, 1.25);
-    const grow = new THREE.Matrix4().makeScale(Math.sqrt(k), 1, Math.sqrt(k));
-    this.object.matrix.copy(cur).multiply(grow).multiply(this.restInv).multiply(this.local);
+    this.object.matrix.copy(cur).multiply(this.restInv).multiply(this.local)
+      .multiply(new THREE.Matrix4().makeTranslation(0, this.lift, 0));
     this.object.matrixWorldNeedsUpdate = true;
     this.inverse.copy(this.object.matrix).invert();
     if (this.object.visible) {
@@ -574,6 +593,15 @@ function cubic(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Ve
     .addScaledVector(d, t * t * t);
 }
 
+/**
+ * 動いて頭が食い込んだときの持ち上げ：かぶったときより円錐の根元の太らせ量がこれ以上増えたら持ち上げ始める、
+ * 増えた量に掛けて1回に持ち上げる量（根元の傾きのおよそ逆数の半分）、戻す速さ、上限（いずれも帽子の単位）
+ */
+const LIFT_SLACK = 0.03;
+const LIFT_GAIN = 3;
+const LIFT_DROP = 0.004;
+const LIFT_MAX = 1.5;
+
 /** 体型を変えてから、落ち着いた形で置き直すまでの update の回数 */
 const RESEAT_FRAMES = 45;
 
@@ -581,16 +609,13 @@ const RESEAT_FRAMES = 45;
  * 体の今の頂点を、帽子を載せる座標（静止形状の座標）へ戻す。update と同じ 4点の枠で戻すので、
  * 戻した形の上に置いた帽子は、今の体の上にちょうど載る
  */
-function currentShape(ctx: AttachContext, anchors: number[], restInv: THREE.Matrix4, restWidth: number): Float32Array {
+function currentShape(ctx: AttachContext, anchors: number[], restInv: THREE.Matrix4): Float32Array {
   const p = anchors.map((i) => {
     const v = new THREE.Vector3();
     readVertex(ctx.pos, ctx.nrm, i, v);
     return v;
   });
-  const cur = frameOf(p[0], p[1], p[2], p[3]);
-  const k = THREE.MathUtils.clamp(p[1].distanceTo(p[3]) / restWidth, 0.85, 1.25);
-  const grow = new THREE.Matrix4().makeScale(Math.sqrt(k), 1, Math.sqrt(k));
-  const back = cur.multiply(grow).multiply(restInv).invert();
+  const back = frameOf(p[0], p[1], p[2], p[3]).multiply(restInv).invert();
   const out = new Float32Array(ctx.pos.length);
   const v = new THREE.Vector3();
   for (let i = 0; i < out.length; i += 3) {
