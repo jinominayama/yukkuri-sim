@@ -44,6 +44,8 @@ scene.add(marker);
 
 const yukkuri = new Yukkuri();
 scene.add(yukkuri.root);
+scene.add(yukkuri.feeding.object);
+scene.add(yukkuri.texts.object);
 yukkuri.drop(0.6);
 // 帽子の先まで入るよう、少し上を見て少し引く
 controls.target.set(0, yukkuri.height * 0.7, 0);
@@ -122,7 +124,8 @@ renderer.setAnimationLoop(() => {
     if (steps === MAX_STEPS_PER_FRAME) accumulator = 0;
   }
   yukkuri.sync();
-  marker.visible = yukkuri.locomotion.hasTarget;
+  // 食べている間に指示された行き先も出しておく（食べ終わってから向かう）
+  marker.visible = yukkuri.locomotion.hasTarget || yukkuri.locomotion.deferred;
   marker.position.x = yukkuri.locomotion.target.x;
   marker.position.z = yukkuri.locomotion.target.z;
 

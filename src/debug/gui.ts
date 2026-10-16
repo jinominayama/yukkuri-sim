@@ -138,6 +138,10 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   mv.add(y.move, 'crawlBend', 0, 0.8, 0.01).name('這う：頭を前に出す量');
   mv.add(y.move, 'crawlRhythm', 0.2, 2, 0.05).name('這う：リズム');
 
+  // ごはん：食べ物を目の前に置くと、見つめる → むーしゃむーしゃ → しあわせー の順に食べる
+  const meal = gui.addFolder('ごはん');
+  meal.add({ f: () => y.feeding.start() }, 'f').name('食べ物をあげる');
+
   const pose = gui.addFolder('体勢');
   pose.add({ f: () => y.locomotion.lieDown('prone') }, 'f').name('腹ばいになる');
   pose.add({ f: () => y.locomotion.lieDown('supine') }, 'f').name('仰向けになる');

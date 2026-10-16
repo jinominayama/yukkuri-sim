@@ -44,6 +44,11 @@ export class Face {
   private blinkT = -1;
   /** 最後に描いた内容（変化の判定用） */
   private drawnKey = '';
+  /**
+   * 一時的な表情（食べる動きなどの演出用）。指定したパーツだけ選択を上書きして描く。
+   * 設定（settings）は書き換えないので、null に戻せばいつもの顔に戻る。上書きしたパーツは左右反転しない
+   */
+  override: Partial<PartSelection> | null = null;
 
   constructor() {
     const w = FACE_RECT.xMax - FACE_RECT.xMin;
@@ -99,14 +104,19 @@ export class Face {
   /** 描画直前に呼ぶ：変化があれば描き直す */
   render(): void {
     const s = this.settings;
-    const ex = composeExpression(s.parts, s.flip);
+    const parts = this.override ? { ...s.parts, ...this.override } : s.parts;
+    // 上書きしたパーツだけ左右反転を外す（ほかは選んでいる向きのまま）
+    const flip = this.override
+      ? { ...s.flip, ...Object.fromEntries(Object.keys(this.override).map((k) => [k, false])) } as PartFlip
+      : s.flip;
+    const ex = composeExpression(parts, flip);
     const style = findStyle(s.style);
     // まばたき：閉じて開く（0→1→0）。描き直しを減らすため4段階に丸める
     let blink = 0;
     if (s.blink && ex.blink && this.blinkT >= 0) {
       blink = Math.round(Math.sin((this.blinkT / BLINK_TIME) * Math.PI) * 4) / 4;
     }
-    const key = `${JSON.stringify(s.parts)}|${JSON.stringify(s.flip)}|${style.id}|${s.iris}|${blink}`;
+    const key = `${JSON.stringify(parts)}|${JSON.stringify(flip)}|${style.id}|${s.iris}|${blink}`;
     if (key === this.drawnKey) return;
     this.drawnKey = key;
 

@@ -9,6 +9,8 @@ import { createOutlineMaterial } from '../render/outlineMaterial';
 import { createBlobShadow } from '../render/blobShadow';
 import { Face } from '../face/Face';
 import { Outfit } from '../character/Outfit';
+import { Feeding } from './feeding';
+import { TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
 /** 物理メッシュと描画メッシュの細かさ */
@@ -30,6 +32,8 @@ export const DEFAULT_LIFE: LifeParams = { breath: 0.03, breathRate: 0.3 };
  */
 /** 初めて開いたときのキャラクター */
 const FIRST_CHARACTER = 'marisa';
+/** 震え（tremble）の速さ（回/秒） */
+const TREMBLE_RATE = 13;
 
 export class Yukkuri {
   readonly root = new THREE.Group();
@@ -47,6 +51,12 @@ export class Yukkuri {
   /** 最後に適用した体型プリセット */
   presetId = this.startPreset.id;
   readonly locomotion: Locomotion;
+  /** 物を食べる動き（食べ物・食べかす・文字は feeding.object をシーンに置いて表示する） */
+  readonly feeding: Feeding;
+  /** まわりに出す文字（texts.object をシーンに置いて表示する） */
+  readonly texts = new TextFx();
+  /** 体の見た目だけを小刻みに震わせる振れ幅（胴の半径に対する比。0 で止まる。物理には触らない） */
+  tremble = 0;
   readonly bodyMaterial: THREE.ShaderMaterial;
   readonly outlineMaterial: THREE.ShaderMaterial;
   readonly body: SoftBody;
@@ -87,6 +97,7 @@ export class Yukkuri {
     this.outfit.usePreset(this.presetId);
 
     this.locomotion = new Locomotion(this.body, this.move);
+    this.feeding = new Feeding(this);
     this.applyShape();
     // 初めて開いたときは魔理沙で始める（テスト版）
     if (this.outfit.fresh) {
@@ -181,12 +192,22 @@ export class Yukkuri {
     this.face.update(dt);
     this.body.volumeScale = 1 + this.life.breath * Math.sin(this.time * Math.PI * 2 * this.life.breathRate);
     this.locomotion.update(dt, this.physics.gravity);
+    this.feeding.update(dt);
+    this.texts.update(dt);
     this.body.step(dt, this.physics);
   }
 
   /** 描画直前に呼ぶ */
   sync(): void {
     this.skin.update(this.body);
+    // 震え：左右・前後に、少しずらした速さで小刻みに揺らす（見た目だけ）
+    if (this.tremble > 0) {
+      const a = this.tremble * this.shape.radius;
+      const w = this.time * Math.PI * 2;
+      this.root.position.set(a * Math.sin(w * TREMBLE_RATE), 0, a * 0.6 * Math.sin(w * TREMBLE_RATE * 0.83 + 1));
+    } else {
+      this.root.position.set(0, 0, 0);
+    }
     this.outfit.update();
     this.face.render();
 

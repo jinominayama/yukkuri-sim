@@ -168,6 +168,13 @@ export const MIN_HOP_HEIGHT = 0.12;
 export class Locomotion {
   readonly target = new Vector3();
   hasTarget = false;
+  /**
+   * ほかの動き（食べるなど）をしている。うろつかず、行き先を指示されても動かずに覚えておき、
+   * release() で動き出す
+   */
+  private holding = false;
+  /** 動けない間に指示された行き先がある（target に入っている） */
+  deferred = false;
   private state: State = 'idle';
   private t = 0;
   private airborne = false;
@@ -285,6 +292,11 @@ export class Locomotion {
     this.go('getUp');
   }
 
+  /** 立って待機している（移動・体勢の切り替えをしていない）か */
+  get idle(): boolean {
+    return this.state === 'idle';
+  }
+
   /** 横になっている（倒れ込み中を含む）か */
   get isLying(): boolean {
     return this.state === 'lieDown' || this.state === 'lying';
@@ -292,12 +304,28 @@ export class Locomotion {
 
   moveTo(x: number, z: number): void {
     this.target.set(x, 0, z);
-    this.hasTarget = true;
     this.idleFor = 0;
+    if (this.holding) this.deferred = true;
+    else this.hasTarget = true;
   }
 
   stop(): void {
     this.hasTarget = false;
+    this.deferred = false;
+  }
+
+  /** ほかの動きを始める：今の移動をやめ、終わるまで動かない */
+  hold(): void {
+    this.holding = true;
+    if (this.hasTarget) this.deferred = true;
+    this.hasTarget = false;
+  }
+
+  /** ほかの動きが終わった：その間に指示された行き先があれば動き出す */
+  release(): void {
+    this.holding = false;
+    if (this.deferred) this.hasTarget = true;
+    this.deferred = false;
   }
 
   /** 体を置き直したときなどに、移動・体勢を待機状態に戻す（横になっていても立った状態に戻る） */
@@ -424,7 +452,7 @@ export class Locomotion {
       }
       case 'idle': {
         this.idleFor += dt;
-        if (!this.hasTarget && p.wander && this.idleFor > this.idleWait) {
+        if (!this.hasTarget && p.wander && !this.holding && this.idleFor > this.idleWait) {
           const a = Math.random() * Math.PI * 2;
           const r = Math.sqrt(Math.random()) * p.wanderRadius;
           this.moveTo(Math.cos(a) * r, Math.sin(a) * r);

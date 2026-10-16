@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { loadJSON, saveJSON } from '../platform/storage';
 import { createAccessoryOutlineMaterial } from '../render/outlineMaterial';
-import { FaceIndex } from './FaceIndex';
+import { FaceIndex, readVertex } from './FaceIndex';
 import { HairShell } from './HairShell';
 import { Braid } from './Braid';
 import { WitchHat } from './WitchHat';
@@ -164,6 +164,17 @@ export class Outfit {
     this.refreshArrays();
     for (const a of this.accessories) a.rebuild(this.ctx);
     this.applyVisibility();
+  }
+
+  /**
+   * 顔座標 (fx, fy)（単位は頭の半径）の今の位置と法線（ワールド座標）。
+   * 体型を作る前などで求められないときは false
+   */
+  facePoint(fx: number, fy: number, pos: THREE.Vector3, nrm: THREE.Vector3): boolean {
+    if (this.index.fx.length === 0) return false;
+    this.refreshArrays();
+    readVertex(this.ctx.pos, this.ctx.nrm, this.index.nearest(fx, fy), pos, nrm);
+    return true;
   }
 
   /** 描画の直前に呼ぶ（体の描画メッシュを更新した後） */
