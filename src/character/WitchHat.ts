@@ -64,6 +64,8 @@ export class WitchHat implements Accessory {
   private reseatIn = 0;
   /** 動いて頭が食い込んだときに帽子を持ち上げている量（帽子の単位）と、かぶったときの円錐の根元の太らせ量（-1 は未測定） */
   private lift = 0;
+  /** 持ち上げたい量。lift は毎回ここへ近づける（一度に持ち上げると帽子と三つ編みの編み始めが跳んで見える） */
+  private liftGoal = 0;
   private basePush = -1;
   /** 実際に使った前後の傾き（制限で調整値より小さくなることがある） */
   tiltUsed = 0;
@@ -235,9 +237,10 @@ export class WitchHat implements Accessory {
     for (let k = 0; k <= SEAT_ROWS; k++) m = Math.max(m, push[k]);
     if (this.basePush < 0) this.basePush = m;
     const over = m - Math.max(this.basePush, SEAT_ALLOW) - LIFT_SLACK;
-    if (this.folded) this.lift = Math.max(0, this.lift - LIFT_DROP * 4);
-    else if (over > 0) this.lift = Math.min(LIFT_MAX, this.lift + over * LIFT_GAIN);
-    else if (over < -LIFT_SLACK) this.lift = Math.max(0, this.lift - LIFT_DROP);
+    // 食い込みは今の lift で測っているので、持ち上げたい量は今の lift からの上乗せ（追いつく途中で積み増さない）
+    if (this.folded) this.liftGoal = Math.max(0, this.liftGoal - LIFT_DROP * 4);
+    else if (over > 0) this.liftGoal = Math.min(LIFT_MAX, Math.max(this.liftGoal, this.lift + over * LIFT_GAIN));
+    else if (over < -LIFT_SLACK) this.liftGoal = Math.max(0, this.liftGoal - LIFT_DROP);
   }
 
   /**
@@ -489,6 +492,7 @@ export class WitchHat implements Accessory {
     this.localN = new Float32Array(near.length * 3);
     this.crownPush.fill(-1); // 次の update で必ず当て直す
     this.lift = 0;
+    this.liftGoal = 0;
     this.basePush = -1;
     this.frill?.invalidate();
     // 体型を変えた直後は体がまだ揺れているので、落ち着いた頃にもう一度置き直す
@@ -527,6 +531,8 @@ export class WitchHat implements Accessory {
     });
     // 帽子は形を変えずに頭について行く（体の幅に合わせて広げたり縮めたりすると、跳ねるたびに伸び縮みして見える）。
     // 頭が帽子に食い込んだ分は、円錐を太らせる代わりに帽子ごと持ち上げる（lift）
+    // 持ち上げは数コマかけて追いつく。下ろすのは持ち上げたい量がもともとゆっくり減るのでそのまま
+    this.lift = this.liftGoal > this.lift ? this.lift + (this.liftGoal - this.lift) * LIFT_RISE : this.liftGoal;
     const cur = frameOf(p[0], p[1], p[2], p[3]);
     this.object.matrix.copy(cur).multiply(this.restInv).multiply(this.local)
       .multiply(new THREE.Matrix4().makeTranslation(0, this.lift, 0));
@@ -601,6 +607,8 @@ const LIFT_SLACK = 0.03;
 const LIFT_GAIN = 3;
 const LIFT_DROP = 0.004;
 const LIFT_MAX = 1.5;
+/** 持ち上げたい量へ、update 1回に縮める差の割合 */
+const LIFT_RISE = 0.3;
 
 /** 体型を変えてから、落ち着いた形で置き直すまでの update の回数 */
 const RESEAT_FRAMES = 45;

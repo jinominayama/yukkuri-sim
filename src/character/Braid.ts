@@ -33,40 +33,63 @@ const LOBE_TILT = 0.55;
 /** 編み目の数の上限（体型を変えても作り直さずに済むよう、多めに作って使う分だけ表示する） */
 const MAX_LOBES = 40;
 
-/** 編み目の間隔：これより大きく変わったらすぐ合わせる（比）、それ以下は update 1回にこの割合ずつ追従する */
-const SPACING_SNAP = 0.03;
+/**
+ * 編み目の間隔の追従：立ち止まっているときは update 1回にこの割合ずつ（呼吸の伸び縮みを拾わない）、
+ * 差がこれより大きいとき（比）と動いているときは SPACING_MOVE の割合ずつ（一度に合わせると階段状に跳んで見える）
+ */
 const SPACING_FOLLOW = 0.005;
+const SPACING_SNAP = 0.03;
+const SPACING_MOVE = 0.4;
 /** 編み目の数を変えるのは、ちょうどの数からこれ以上離れたとき（0.5 より大きくして境目でのばたつきを防ぐ） */
 const COUNT_KEEP = 0.8;
 /** 帽子の外へ出た所から編み始めまでの道筋の長さ（編み目1つの長さに対する比。一番上の編み目の上半分ほど） */
 const COVER_CLEAR = 0.55;
+/** 編み始めで除く長さへ、update 1回に縮める差の割合 */
+const TRIM_FOLLOW = 0.25;
 /** 帽子に隠れる所を除いても、これだけ（道筋の点の数）は残す */
 const MIN_PATH = 3;
 
 /**
- * 道筋の先頭から、帽子に隠れる所（cover が true）と、そこからさらに道筋に沿って clear の長さを除く。
- * 除いた先頭は、ちょうどその位置に置いた点にする
+ * 道筋の先頭から、帽子に隠れる所（cover が true）と、そこからさらに道筋に沿って clear の長さを除くとしたら、
+ * 先頭から道筋に沿ってどれだけ除くか。
+ * 帽子の縁が道筋の先頭より上（clear 以内）にあるときも、縁から clear の所まで除く
+ * （先頭が隠れた瞬間に clear だけ一度に跳ばないように）
  */
-function trimCovered(pts: THREE.Vector3[], nrms: THREE.Vector3[], cover: (p: THREE.Vector3) => boolean, clear: number): void {
-  let k = 0;
-  while (k < pts.length - MIN_PATH && cover(pts[k])) k++;
-  if (k === 0) return;
-  // 帽子の縁を横切る所（k-1 と k の間）を二分探索で
-  let lo = 0, hi = 1;
-  const a = pts[k - 1], b = pts[k];
-  for (let i = 0; i < 8; i++) {
-    const m = (lo + hi) / 2;
-    if (cover(a.clone().lerp(b, m))) lo = m;
-    else hi = m;
+function coveredLength(pts: THREE.Vector3[], cover: (p: THREE.Vector3) => boolean, clear: number): number {
+  /** a（隠れている）と b（隠れていない）の間の、帽子の縁の位置の割合（a からの） */
+  const edge = (a: THREE.Vector3, b: THREE.Vector3) => {
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 8; i++) {
+      const m = (lo + hi) / 2;
+      if (cover(a.clone().lerp(b, m))) lo = m;
+      else hi = m;
+    }
+    return hi;
+  };
+  if (!cover(pts[0])) {
+    // 先頭から道筋を上へ clear だけ延ばした所が隠れていれば、縁から先頭までの距離を差し引く
+    const back = pts[0].clone().addScaledVector(pts[0].clone().sub(pts[1]).normalize(), clear);
+    return cover(back) ? clear * edge(back, pts[0]) : 0;
   }
-  // そこから clear だけ道筋に沿って下る
-  let left = clear + a.distanceTo(b) * hi;
-  let i = k - 1;
-  while (i < pts.length - MIN_PATH && left > pts[i].distanceTo(pts[i + 1])) {
-    left -= pts[i].distanceTo(pts[i + 1]);
+  let k = 0, d = 0;
+  while (k < pts.length - MIN_PATH && cover(pts[k])) {
+    if (k > 0) d += pts[k - 1].distanceTo(pts[k]);
+    k++;
+  }
+  if (k === 0) return 0;
+  // 帽子の縁を横切る所（k-1 と k の間）から clear だけ下
+  return d + pts[k - 1].distanceTo(pts[k]) * edge(pts[k - 1], pts[k]) + clear;
+}
+
+/** 道筋の先頭から、道筋に沿って d の長さを除く（MIN_PATH 個の点は残す）。除いた先頭は、ちょうどその位置に置いた点にする */
+function cutPath(pts: THREE.Vector3[], nrms: THREE.Vector3[], d: number): void {
+  if (d <= 0) return;
+  let i = 0;
+  while (i < pts.length - MIN_PATH && d > pts[i].distanceTo(pts[i + 1])) {
+    d -= pts[i].distanceTo(pts[i + 1]);
     i++;
   }
-  const t = Math.min(1, left / Math.max(1e-6, pts[i].distanceTo(pts[i + 1])));
+  const t = Math.min(1, d / Math.max(1e-6, pts[i].distanceTo(pts[i + 1])));
   const start = pts[i].clone().lerp(pts[i + 1], t);
   const startN = nrms[i].clone().lerp(nrms[i + 1], t).normalize();
   pts.splice(0, i + 1, start);
@@ -172,6 +195,8 @@ export class Braid implements Accessory {
   private counted = false;
   /** 地面に沿わせ始める所（道筋に沿った距離）。小さな動きにはゆっくりしか追従しない（-1 は地面に届いていない） */
   private groundAt = -1;
+  /** 編み始めで除いている長さ（道筋に沿った距離。-1 は未定） */
+  private trimmed = -1;
   /** 点が帽子に隠れているか（帽子をかぶっているとき Outfit が設定する）。編み始めを帽子の外へ出すのに使う */
   cover: ((p: THREE.Vector3) => boolean) | null = null;
 
@@ -219,6 +244,7 @@ export class Braid implements Accessory {
     this.spacing = -1;
     this.count = 0;
     this.counted = false;
+    this.trimmed = -1;
     this.groundAt = -1;
     for (let i = 0; i < PATH; i++) {
       const fy = st.top + ((bottom - st.top) * i) / (PATH - 1);
@@ -245,15 +271,18 @@ export class Braid implements Accessory {
     }
     // 帽子に隠れる所は編まない（編み目がフリルやつばを突き抜けないように）。
     // 編み始めは、帽子の外へ出た所から一番上の編み目の高さぶん下
-    if (this.cover) trimCovered(pts, nrms, this.cover, st.segment * R * COVER_CLEAR);
+    // 除く長さはなめらかに追従させる（頭に押されたフリルが段ごとにたくし上がると、隠れる所が一度に変わるため）
+    const covered = this.cover ? coveredLength(pts, this.cover, st.segment * R * COVER_CLEAR) : 0;
+    this.trimmed = this.trimmed < 0 ? covered : this.trimmed + (covered - this.trimmed) * TRIM_FOLLOW;
+    cutPath(pts, nrms, this.trimmed);
     // 地面に届いたら、そこから先は地面に沿って体の外へ流す（地面で押しつぶされないように）。
     // 体の下側は地面とほぼ平行なので、呼吸で体がわずかに上下するだけで届く所が道筋に沿って大きく動き、
     // 曲がり角の編み目の向きが揺れる。届く所も、小さな動きにはゆっくりしか追従させない
     const floor = st.width * R * GROUND_FLOAT;
     const reach = groundCrossing(pts, floor);
     if (reach < 0) this.groundAt = -1; // 浮いている（跳んでいるときなど）
-    else if (this.groundAt < 0 || Math.abs(reach - this.groundAt) > st.segment * R) this.groundAt = reach;
-    else this.groundAt += (reach - this.groundAt) * SPACING_FOLLOW;
+    else if (this.groundAt < 0) this.groundAt = reach;
+    else this.groundAt += (reach - this.groundAt) * (Math.abs(reach - this.groundAt) > st.segment * R ? TRIM_FOLLOW : SPACING_FOLLOW);
     if (this.groundAt >= 0) layOnGround(pts, nrms, this.groundAt, floor, bodyCenter(ctx.pos));
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
@@ -300,8 +329,8 @@ export class Braid implements Accessory {
       if (still) this.counted = true;
     }
     const want = target / count;
-    if (this.spacing < 0 || count !== this.count || Math.abs(want - this.spacing) > want * SPACING_SNAP) this.spacing = want;
-    else this.spacing += (want - this.spacing) * SPACING_FOLLOW;
+    if (this.spacing < 0 || count !== this.count) this.spacing = want;
+    else this.spacing += (want - this.spacing) * (!still || Math.abs(want - this.spacing) > want * SPACING_SNAP ? SPACING_MOVE : SPACING_FOLLOW);
     this.count = count;
     const braidEnd = this.spacing * count;
     this.lobes.forEach((g, i) => {
