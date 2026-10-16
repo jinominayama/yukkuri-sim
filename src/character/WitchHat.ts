@@ -49,6 +49,8 @@ export class WitchHat implements Accessory {
   /** つばの上面の高さ（中心からの距離 → 帽子の座標の y）と、つばの外周の半径 */
   private brimTop: (r: number) => number = () => 0;
   private brimR = 1;
+  /** object.matrix の逆（体の座標 → 帽子の座標） */
+  private readonly inverse = new THREE.Matrix4();
   /** つば（寝転がって折れているときは頭の外へ押し出す） */
   private brimGeometry: THREE.BufferGeometry | null = null;
   private brimBase = new Float32Array(0);
@@ -475,6 +477,23 @@ export class WitchHat implements Accessory {
     this.update(ctx);
   }
 
+  /**
+   * 点 p（体と同じ座標）が帽子の下（つばの内側で、フリルの裾より上）に隠れているか。
+   * 三つ編みの編み始めを帽子の外へ出すのに使う。margin：裾より下へこれだけ（帽子の単位）までは隠れているとみなす
+   */
+  covers(p: THREE.Vector3, margin = 0): boolean {
+    if (!this.object.visible || !this.frill) return false;
+    const v = p.clone().applyMatrix4(this.inverse);
+    if (Math.hypot(v.x, v.z) > this.brimR) return false;
+    const { SEG, ROWS } = Frill;
+    const a = Math.atan2(v.x, v.z);
+    const s = ((Math.round((a / (Math.PI * 2)) * SEG) % SEG) + SEG) % SEG;
+    const pos = this.frill.geometry.getAttribute('position');
+    let hem = Infinity;
+    for (let r = 0; r <= ROWS; r++) hem = Math.min(hem, pos.getY(r * (SEG + 1) + s));
+    return v.y > hem - margin;
+  }
+
   update(ctx: AttachContext): void {
     if (this.reseatIn > 0 && --this.reseatIn === 0) {
       this.reseating = true;
@@ -493,6 +512,7 @@ export class WitchHat implements Accessory {
     const grow = new THREE.Matrix4().makeScale(Math.sqrt(k), 1, Math.sqrt(k));
     this.object.matrix.copy(cur).multiply(grow).multiply(this.restInv).multiply(this.local);
     this.object.matrixWorldNeedsUpdate = true;
+    this.inverse.copy(this.object.matrix).invert();
     if (this.object.visible) {
       this.avoidHead(ctx);
       const fold = this.groundFold();

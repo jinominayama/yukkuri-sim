@@ -33,6 +33,124 @@ const LOBE_TILT = 0.55;
 /** 編み目の数の上限（体型を変えても作り直さずに済むよう、多めに作って使う分だけ表示する） */
 const MAX_LOBES = 40;
 
+/** 編み目の間隔：これより大きく変わったらすぐ合わせる（比）、それ以下は update 1回にこの割合ずつ追従する */
+const SPACING_SNAP = 0.03;
+const SPACING_FOLLOW = 0.005;
+/** 編み目の数を変えるのは、ちょうどの数からこれ以上離れたとき（0.5 より大きくして境目でのばたつきを防ぐ） */
+const COUNT_KEEP = 0.8;
+/** 帽子の外へ出た所から編み始めまでの道筋の長さ（編み目1つの長さに対する比。一番上の編み目の上半分ほど） */
+const COVER_CLEAR = 0.55;
+/** 帽子に隠れる所を除いても、これだけ（道筋の点の数）は残す */
+const MIN_PATH = 3;
+
+/**
+ * 道筋の先頭から、帽子に隠れる所（cover が true）と、そこからさらに道筋に沿って clear の長さを除く。
+ * 除いた先頭は、ちょうどその位置に置いた点にする
+ */
+function trimCovered(pts: THREE.Vector3[], nrms: THREE.Vector3[], cover: (p: THREE.Vector3) => boolean, clear: number): void {
+  let k = 0;
+  while (k < pts.length - MIN_PATH && cover(pts[k])) k++;
+  if (k === 0) return;
+  // 帽子の縁を横切る所（k-1 と k の間）を二分探索で
+  let lo = 0, hi = 1;
+  const a = pts[k - 1], b = pts[k];
+  for (let i = 0; i < 8; i++) {
+    const m = (lo + hi) / 2;
+    if (cover(a.clone().lerp(b, m))) lo = m;
+    else hi = m;
+  }
+  // そこから clear だけ道筋に沿って下る
+  let left = clear + a.distanceTo(b) * hi;
+  let i = k - 1;
+  while (i < pts.length - MIN_PATH && left > pts[i].distanceTo(pts[i + 1])) {
+    left -= pts[i].distanceTo(pts[i + 1]);
+    i++;
+  }
+  const t = Math.min(1, left / Math.max(1e-6, pts[i].distanceTo(pts[i + 1])));
+  const start = pts[i].clone().lerp(pts[i + 1], t);
+  const startN = nrms[i].clone().lerp(nrms[i + 1], t).normalize();
+  pts.splice(0, i + 1, start);
+  nrms.splice(0, i + 1, startN);
+}
+
+/**
+ * 法線 nrm と、編み目の伸びる向き down から、横の向き（nrm × down）。
+ * 2 つがほぼ同じ向きのときは横の向きが定まらず毎コマ回ってしまうので、nrm を down に直交する成分にし、
+ * それも小さいときは真上（down に直交する成分）で補う
+ */
+function sideOf(nrm: THREE.Vector3, down: THREE.Vector3): THREE.Vector3 {
+  const n = nrm.clone().addScaledVector(down, -nrm.dot(down));
+  if (n.lengthSq() < 0.04) {
+    const up = new THREE.Vector3(0, 1, 0);
+    const u = up.addScaledVector(down, -up.dot(down));
+    n.lerp(u, 1 - n.length() / 0.2);
+  }
+  return new THREE.Vector3().crossVectors(n, down).normalize();
+}
+
+/** 体の中心（頂点の平均。間引いて数える） */
+function bodyCenter(pos: Float32Array): THREE.Vector3 {
+  const c = new THREE.Vector3();
+  let n = 0;
+  for (let i = 0; i < pos.length; i += 3 * 16) {
+    c.x += pos[i]; c.y += pos[i + 1]; c.z += pos[i + 2];
+    n++;
+  }
+  return c.divideScalar(Math.max(1, n));
+}
+
+/** 地面に沿わせた所の、道筋の地面からの高さ（編み目の幅に対する比。編み目の厚みの半分ほど） */
+const GROUND_FLOAT = 0.35;
+/** 地面に沿わせた所で、編み目の向きを寝かせ終えるまでの距離（GROUND_FLOAT の高さに対する比） */
+const GROUND_TURN = 6;
+
+/** 道筋に沿って、高さ floor より下へ初めて行く所までの距離（行かなければ -1） */
+function groundCrossing(pts: THREE.Vector3[], floor: number): number {
+  let d = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const L = a.distanceTo(b);
+    if (b.y < floor && i > 0) {
+      if (a.y < floor) return d; // 道筋の始まりから下にある
+      return d + L * ((a.y - floor) / Math.max(1e-6, a.y - b.y));
+    }
+    d += L;
+  }
+  return -1;
+}
+
+/**
+ * 道筋（体の表面から浮かせた点の列と、その法線）の、距離 from から先を、地面に沿って体の外へ流す。
+ * 距離は道筋の長さのまま保つ（長さの調整値どおりの長さになる）。
+ * 流した所の法線は、流し始めの法線から真上へ寝かせていく（編み目の前面が上を向き、地面に寝た形になる）
+ */
+function layOnGround(pts: THREE.Vector3[], nrms: THREE.Vector3[], from: number, floor: number, center: THREE.Vector3): void {
+  // 流し始め：道筋に沿って from の所
+  let d = 0, k = 1;
+  while (k < pts.length - 1 && d + pts[k].distanceTo(pts[k - 1]) < from) d += pts[k].distanceTo(pts[k - 1]), k++;
+  const a = pts[k - 1], b = pts[k];
+  const t = THREE.MathUtils.clamp((from - d) / Math.max(1e-6, a.distanceTo(b)), 0, 1);
+  const start = a.clone().lerp(b, t);
+  // 流す向き：体の中心から流し始めへ向かう水平の向き（体の外向き）。
+  // 法線から取ると、体の真下近くでは法線がほぼ真下を向き、わずかな揺れで向きが大きく変わる
+  const dir = start.clone().sub(center).setY(0);
+  if (dir.lengthSq() < 1e-8) dir.copy(b).sub(a).setY(0);
+  if (dir.lengthSq() < 1e-8) dir.set(0, 0, 1);
+  dir.normalize();
+  // 置き換える前の道筋に沿った距離
+  const dist = [start.distanceTo(b)];
+  for (let i = k + 1; i < pts.length; i++) dist.push(dist[dist.length - 1] + pts[i].distanceTo(pts[i - 1]));
+  const startN = nrms[k - 1].clone().lerp(nrms[k], t).normalize();
+  const up = new THREE.Vector3(0, 1, 0);
+  // ほぼ真下を向いているときは体の外向きから（真上へ混ぜる途中で長さ 0 を通らないように）
+  const n0 = startN.y < -0.7 ? startN.clone().lerp(dir, 0.7).normalize() : startN;
+  for (let i = k; i < pts.length; i++) {
+    pts[i] = start.clone().addScaledVector(dir, dist[i - k]);
+    const w = THREE.MathUtils.smoothstep(dist[i - k], 0, floor * GROUND_TURN);
+    nrms[i] = n0.clone().lerp(up, w).normalize();
+  }
+}
+
 /**
  * 三つ編み：体の表面に沿って垂れる編み目の列。編み目は左右に交互に傾いたふくらみで、
  * 下の方にリボン、その下に毛先の房。
@@ -47,6 +165,13 @@ export class Braid implements Accessory {
   private readonly materials: THREE.Material[] = [];
   private readonly geometries: THREE.BufferGeometry[] = [];
   private headR = 1;
+  /** 編み目の間隔（道筋に沿った距離）。呼吸などの小さな伸び縮みにはゆっくりしか追従しない（-1 は未定） */
+  private spacing = -1;
+  private count = 0;
+  /** 地面に沿わせ始める所（道筋に沿った距離）。小さな動きにはゆっくりしか追従しない（-1 は地面に届いていない） */
+  private groundAt = -1;
+  /** 点が帽子に隠れているか（帽子をかぶっているとき Outfit が設定する）。編み始めを帽子の外へ出すのに使う */
+  cover: ((p: THREE.Vector3) => boolean) | null = null;
 
   constructor(ctx: AttachContext, private readonly style: BraidStyle, private readonly params: OutfitParams) {
     const hair = createAccessoryMaterial(ctx.bodyMaterial, style.hair, { rim: 0.2 });
@@ -89,6 +214,9 @@ export class Braid implements Accessory {
     const k = THREE.MathUtils.clamp(this.params.braidLength, 0, 1);
     const bottom = Math.min(st.top - st.segment * 1.5, st.top + (full - st.top) * k);
     this.path = [];
+    this.spacing = -1;
+    this.count = 0;
+    this.groundAt = -1;
     for (let i = 0; i < PATH; i++) {
       const fy = st.top + ((bottom - st.top) * i) / (PATH - 1);
       // 下へ行くほど少し外側（体の丸みに沿って広がる）
@@ -110,9 +238,23 @@ export class Braid implements Accessory {
       pts.push(p.clone().addScaledVector(n, lift));
       nrms.push(n.clone());
     }
+    // 帽子に隠れる所は編まない（編み目がフリルやつばを突き抜けないように）。
+    // 編み始めは、帽子の外へ出た所から一番上の編み目の高さぶん下
+    if (this.cover) trimCovered(pts, nrms, this.cover, st.segment * R * COVER_CLEAR);
+    // 地面に届いたら、そこから先は地面に沿って体の外へ流す（地面で押しつぶされないように）。
+    // 体の下側は地面とほぼ平行なので、呼吸で体がわずかに上下するだけで届く所が道筋に沿って大きく動き、
+    // 曲がり角の編み目の向きが揺れる。届く所も、小さな動きにはゆっくりしか追従させない
+    const floor = st.width * R * GROUND_FLOAT;
+    const reach = groundCrossing(pts, floor);
+    if (reach < 0) this.groundAt = -1; // 浮いている（跳んでいるときなど）
+    else if (this.groundAt < 0 || Math.abs(reach - this.groundAt) > st.segment * R) this.groundAt = reach;
+    else this.groundAt += (reach - this.groundAt) * SPACING_FOLLOW;
+    if (this.groundAt >= 0) layOnGround(pts, nrms, this.groundAt, floor, bodyCenter(ctx.pos));
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
     const total = cum[cum.length - 1];
+    // 点ごとの接線（前後の点を結ぶ向き）。区間の向きをそのまま使うと、編み目が点をまたぐたびに向きが跳ぶ
+    const tans = pts.map((_, i) => pts[Math.min(pts.length - 1, i + 1)].clone().sub(pts[Math.max(0, i - 1)]).normalize());
     /** 道筋に沿った距離 d の位置・接線・法線 */
     const at = (d: number) => {
       let k = 1;
@@ -120,14 +262,14 @@ export class Braid implements Accessory {
       const t = THREE.MathUtils.clamp((d - cum[k - 1]) / Math.max(1e-6, cum[k] - cum[k - 1]), 0, 1);
       const pos = pts[k - 1].clone().lerp(pts[k], t);
       const nrm = nrms[k - 1].clone().lerp(nrms[k], t).normalize();
-      const tan = pts[k].clone().sub(pts[k - 1]).normalize();
+      const tan = tans[k - 1].clone().lerp(tans[k], t).normalize();
       return { pos, nrm, tan };
     };
     /** 置く：up を接線の逆（下向きに垂れる）、前を法線にした向き */
     const place = (obj: THREE.Object3D, d: number, side: number, scale: THREE.Vector3, roll: number) => {
       const { pos, nrm, tan } = at(d);
       const down = tan;
-      const lat = new THREE.Vector3().crossVectors(nrm, down).normalize();
+      const lat = sideOf(nrm, down);
       const front = new THREE.Vector3().crossVectors(down, lat).normalize();
       const m = new THREE.Matrix4().makeBasis(lat, down.clone().negate(), front);
       obj.position.copy(pos).addScaledVector(lat, side);
@@ -138,8 +280,18 @@ export class Braid implements Accessory {
 
     const w = st.width * R;
     const seg = st.segment * R;
-    const braidEnd = total * st.bowAt;
-    const count = Math.min(MAX_LOBES, Math.max(2, Math.round(braidEnd / (seg * LOBE_STEP))));
+    // 編み目の数と間隔：道筋の長さから決めるが、呼吸で体がふくらむたびに三つ編みが伸び縮みしないよう、
+    // 間隔はゆっくり追従させる（体型を変えたときなど大きく変わったときはすぐ合わせる）
+    const target = total * st.bowAt;
+    // 数は境目で行ったり来たりしないよう、今の数から COUNT_KEEP 以上離れたときだけ変える
+    const raw = target / (seg * LOBE_STEP);
+    const count = Math.min(MAX_LOBES, Math.max(2,
+      this.count > 0 && this.spacing > 0 && Math.abs(raw - this.count) < COUNT_KEEP ? this.count : Math.round(raw)));
+    const want = target / count;
+    if (this.spacing < 0 || count !== this.count || Math.abs(want - this.spacing) > want * SPACING_SNAP) this.spacing = want;
+    else this.spacing += (want - this.spacing) * SPACING_FOLLOW;
+    this.count = count;
+    const braidEnd = this.spacing * count;
     this.lobes.forEach((g, i) => {
       g.visible = i < count;
       if (!g.visible) return;
@@ -159,14 +311,15 @@ export class Braid implements Accessory {
       const here = at(braidEnd);
       const before = at(Math.max(0, braidEnd - seg * 2.5));
       const down = here.pos.clone().sub(before.pos).normalize();
-      const lat = new THREE.Vector3().crossVectors(here.nrm, down).normalize();
+      const lat = sideOf(here.nrm, down);
       const front = new THREE.Vector3().crossVectors(down, lat).normalize();
       this.bow.position.copy(here.pos).addScaledVector(front, w * 0.25);
       this.bow.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(lat, down.negate(), front));
       this.bow.scale.setScalar(b);
     }
     // 房は結び目から下へ（長すぎると地面に届くので、編み目2つ分ほどまで）
-    const tuftLen = THREE.MathUtils.clamp(total - braidEnd, seg, seg * 1.8) * 1.05;
+    // （長さも間隔と同じくゆっくり追従させた長さから。呼吸で伸び縮みしないように）
+    const tuftLen = THREE.MathUtils.clamp(braidEnd / st.bowAt - braidEnd, seg, seg * 1.8) * 1.05;
     place(this.tuft, braidEnd + w * 0.05, 0, new THREE.Vector3(w * 0.9, tuftLen, w * 0.9), 0);
   }
 

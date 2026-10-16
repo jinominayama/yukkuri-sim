@@ -147,6 +147,11 @@ export class Outfit {
     }
     this.accessories = this.character.create(this.ctx, this.params);
     for (const a of this.accessories) this.object.add(a.object);
+    // 三つ編みの編み始めは帽子の外へ（帽子を表示しているときだけ）
+    const hat = this.accessories.find((a): a is WitchHat => a instanceof WitchHat);
+    for (const a of this.accessories) {
+      if (a instanceof Braid && hat) a.cover = (p) => this.params.showHat && hat.covers(p);
+    }
     this.rebuild();
   }
 
@@ -165,7 +170,9 @@ export class Outfit {
   update(): void {
     if (this.accessories.length === 0) return;
     this.refreshArrays();
-    for (const a of this.accessories) a.update(this.ctx);
+    // 帽子を先に（三つ編みが帽子の今の位置を見るので）
+    for (const a of this.accessories) if (a instanceof WitchHat) a.update(this.ctx);
+    for (const a of this.accessories) if (!(a instanceof WitchHat)) a.update(this.ctx);
   }
 
   /** 髪型のパーツの今の選択（未選択なら先頭の選択肢） */
