@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createAccessoryMaterial } from '../render/accessoryMaterial';
 import type { ToonColors } from '../render/toonMaterial';
-import { GROUND_ACCESSORY, GROUND_CROWN, GROUND_FRILL } from '../render/ground';
+import { GROUND_BRIM, GROUND_CROWN, GROUND_FRILL } from '../render/ground';
 import { readVertex } from './FaceIndex';
 import { bowGeometries, lathe, tubeAlong, withOutline } from './shapes';
 import type { Accessory, AttachContext, OutfitParams } from './types';
@@ -79,7 +79,7 @@ export class WitchHat implements Accessory {
   /** 形を作る（かぶる所の半径 1） */
   private build(ctx: AttachContext): void {
     const st = this.style;
-    const clothBoth = createAccessoryMaterial(ctx.bodyMaterial, st.cloth, { rim: 0.35, doubleSide: true });
+    const clothBoth = createAccessoryMaterial(ctx.bodyMaterial, st.cloth, { rim: 0.35, doubleSide: true, ground: GROUND_BRIM });
     // 円錐と帯：寝転がって地面に押し付けられたとき、髪より上・つばより下の高さで止める
     // （同じ高さだと重なってちらつく）。帯は押しつぶされて面が裏返っても縞にならないよう両面
     const trim = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { doubleSide: true, ground: GROUND_CROWN });
@@ -254,7 +254,7 @@ export class WitchHat implements Accessory {
       // （同じ高さに重なるとちらつく）
       const j = (v / 3) % BRIM_PROFILE;
       const floor = j <= BRIM_TOP_LAST || j === BRIM_PROFILE - 1 ? DRAPE_CLEAR : DRAPE_CLEAR + DRAPE_THICK;
-      const h = gx * x + gy * y + gz * z + e[13] - GROUND_ACCESSORY - floor;
+      const h = gx * x + gy * y + gz * z + e[13] - GROUND_BRIM - floor;
       if (h >= DRAPE_HEIGHT) continue;
       // 外ほど、低いほどよく垂れる（縁の低い所はちょうど止める高さまで）。
       // 止める高さより下にある所は、そこまで持ち上げる（上面と下面が同じ高さでつぶれないように）
