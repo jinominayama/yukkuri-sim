@@ -1,0 +1,389 @@
+import * as THREE from 'three';
+import { createAccessoryMaterial } from '../render/accessoryMaterial';
+import { createAccessoryOutlineMaterial } from '../render/outlineMaterial';
+import type { PartSelection } from '../face/parts';
+import { faceFrame, showFace } from './fx';
+import type { Yukkuri } from './Yukkuri';
+
+/**
+ * うんうん：餡子をチューブから絞り出すように、太くやわらかい一本の塊を出す。
+ *   1. 出す     … 力んだ顔で小刻みに震えながら、体の後ろの下から塊を出す
+ *   2. すっきり … 出し終わったら一歩前へ跳ね、感動した顔で「すっきりー」
+ * 塊は地面に寝そべって真っすぐ後ろへ伸びる。先に出た所（体から遠い先）が一番太くて丸く、
+ * 出し終わりの所（体の側）へ向かってなめらかに細くなる（横から見ると、しずくを長く伸ばしたような形）。
+ * 出している途中も、先に出た太い所が先頭で、出口からはその時に出ている太さの所が押し出される。
+ * 断面はやや横に広い丸で、底は地面で平らにつぶれる。
+ * 出し終わると、やわらかいので少し横に広がって沈む。
+ * 道筋は出し始めに決め、時間とともに先へ伸ばして見せる。出している間とすっきりーの間は、その場から歩き出さない。
+ * 出したものは「片付ける」まで残る
+ */
+type Phase = 'none' | 'wait' | 'push' | 'relief';
+
+/** 出口：背中側（顔の正面から π）の、床から体の高さのこの比の所 */
+const EXIT_HEIGHT = 0.26;
+/**
+ * 仰向けの出口：背中側の ±この角度・床から（寝転ぶ前の）体の高さのこの比以下の範囲で、
+ * 今の高さが寝転んだ体の高さのこの比に一番近い所
+ */
+const SUPINE_AZ_RANGE = 1.6;
+const SUPINE_MAX_HEIGHT = 0.6;
+const SUPINE_EXIT_Y = 0.6;
+/** 塊の一番太い所の横幅の半分・高さの半分・地面に寝そべる長さ（胴の半径に対する比） */
+const HALF_WIDTH = 0.3;
+const HALF_HEIGHT = 0.27;
+const LENGTH = 1.15;
+/** 太さの形（出し終わった後、体の側から数えた長さの比 u で）：u = 0（出し終わり）がこの比で一番細く、THICK_AT から先は一番太い */
+const END_RATIO = 0.18;
+const THICK_AT = 0.8;
+/** 出す速さ（胴の半径に対する比 / 秒） */
+const SPEED = 0.4;
+/** 出し終わってから沈むまでの時間（秒）と、沈んだときの高さ・幅の比 */
+const SETTLE_TIME = 0.8;
+const SETTLE_H = 0.88;
+const SETTLE_W = 1.06;
+/** 出している間の震えの振れ幅（胴の半径に対する比） */
+const PUSH_TREMBLE = 0.012;
+/** すっきりー：前へ跳ねる速さ（m/s、前・上）と、その後の時間（秒） */
+const HOP_FORWARD = 1.0;
+const HOP_UP = 2.4;
+const RELIEF_TIME = 3.2;
+/** 体勢が落ち着くのを待つ上限（秒） */
+const WAIT_MAX = 8;
+/** 置いておく数の上限（古いものから消す） */
+const MAX_PILES = 12;
+/** 断面の分割数と、道筋に沿った輪の間隔（幅に対する比） */
+const SIDES = 24;
+const RING_STEP = 0.24;
+/** 地面から浮かせる高さ（ちらつき防止） */
+const FLOOR = 0.003;
+
+const ANKO = { lit: '#7a4646', shade: '#55292d', deep: '#341519', rim: '#a8706a' };
+
+/** 表情（目・眉・口だけ上書き。頬・涙は足りないときだけ足す） */
+const FACE_PUSH: Partial<PartSelection> = { eyes: 'squeeze', brows: 'worried', mouth: 'openSmall' };
+const AT_LEAST_PUSH: Partial<PartSelection> = { blush: 'mild' };
+const FACE_RELIEF: Partial<PartSelection> = { eyes: 'smile', brows: 'worried', mouth: 'smile' };
+const AT_LEAST_RELIEF: Partial<PartSelection> = { blush: 'mild', tears: 'few' };
+
+interface Pile {
+  group: THREE.Group;
+  geometry: THREE.BufferGeometry;
+  /** 道筋（密な点列）と、各点までの長さ。ground：地面に寝そべり始める所までの長さ */
+  pts: THREE.Vector3[];
+  len: number[];
+  ground: number;
+  /** 今出ている長さと、出し終わってからの時間（-1 は出している途中） */
+  shown: number;
+  settle: number;
+  /** 一番太い所の横幅の半分・高さの半分 */
+  w: number;
+  h: number;
+  /** 体から切り離してからの時間（-1 は出している途中）。切り離すと、体の中にあった根元を消し、宙にある所を地面に下ろす */
+  detached: number;
+  /** 道筋の、体の表面を出る所までの長さ（ここより手前は体の中） */
+  exitS: number;
+  /** 断面の横向き（出す向きに直交する水平の向き。道筋は出す向きを含む縦の面の中にあるので一定） */
+  side: THREE.Vector3;
+}
+
+interface Ring {
+  c: THREE.Vector3;
+  t: THREE.Vector3;
+  side: THREE.Vector3;
+  up: THREE.Vector3;
+  w: number;
+  h: number;
+}
+
+export class Dropping {
+  /** 出したもの（体と一緒に震えないよう、シーンに直接置く） */
+  readonly object = new THREE.Group();
+  private readonly material: THREE.ShaderMaterial;
+  private readonly outline: THREE.ShaderMaterial;
+  private readonly piles: Pile[] = [];
+  private current: Pile | null = null;
+  private settling: Pile[] = [];
+  private phase: Phase = 'none';
+  private t = 0;
+
+  constructor(private readonly y: Yukkuri) {
+    this.material = createAccessoryMaterial(y.bodyMaterial, ANKO, { rim: 0.25 });
+    this.outline = createAccessoryOutlineMaterial(y.outlineMaterial);
+  }
+
+  /** 出している最中か（すっきりーが終わるまで） */
+  get active(): boolean {
+    return this.phase !== 'none';
+  }
+
+  /** 出し始める（腹ばい・仰向けのままでもよい）。食べている・出している最中なら何もしない */
+  start(): boolean {
+    const y = this.y;
+    if (this.active || y.feeding.active) return false;
+    // 移動はやめて、出し終わるまで保留する。体勢が変わっている途中（起き上がる・倒れ込む・寝返る・跳ねるなど）なら、
+    // 立って止まるか寝転がり終えるまで待ってから出す（途中の向きで出口を決めると、横や前に出てしまう）
+    y.locomotion.hold();
+    this.phase = 'wait';
+    this.t = 0;
+    if (this.settled()) this.begin();
+    return true;
+  }
+
+  /** 体が立って止まっているか、寝転がり終えて止まっているか */
+  private settled(): boolean {
+    const loco = this.y.locomotion;
+    return loco.idle || loco.resting;
+  }
+
+  /** 出し始める（出口を決めて、塊を作る） */
+  private begin(): void {
+    const y = this.y;
+    const pos = new THREE.Vector3(), nrm = new THREE.Vector3();
+    if (!y.outfit.surfacePoint(Math.PI, EXIT_HEIGHT, pos, nrm)) {
+      this.finish();
+      return;
+    }
+    // 仰向けでは背中が地面に着き、いつもの出口は地面すれすれになる。背中の下側の範囲から、地面から高い所を選び直す
+    if (y.locomotion.lyingPose === 'supine') {
+      // 体の高さは寝転んだ今の高さ（体の一番高い所）
+      const p = y.bodyMesh.geometry.getAttribute('position').array as Float32Array;
+      let top = 0;
+      for (let i = 1; i < p.length; i += 3) top = Math.max(top, p[i]);
+      y.outfit.surfacePointAt(Math.PI, SUPINE_AZ_RANGE, SUPINE_MAX_HEIGHT, top * SUPINE_EXIT_Y, pos, nrm);
+    }
+    const pile = this.makePile(pos, nrm);
+    this.piles.push(pile);
+    this.object.add(pile.group);
+    while (this.piles.length > MAX_PILES) this.dispose(this.piles.shift()!);
+    this.current = pile;
+    this.phase = 'push';
+    this.t = 0;
+    showFace(y, FACE_PUSH, AT_LEAST_PUSH);
+  }
+
+  /**
+   * 出したもののどれかが、水平に見て点 c から radius 以内にあるか（寝転んだ体が起き上がるときに貫通しそうか）。
+   * 体の中に隠れている根元は数えない
+   */
+  near(c: THREE.Vector3, radius: number): boolean {
+    for (const p of this.piles) {
+      if (p === this.current) continue;
+      const from = p.detached >= 0 ? p.exitS : p.ground;
+      for (let i = 0; i < p.pts.length; i += 2) {
+        if (p.len[i] < from) continue;
+        const d = Math.hypot(p.pts[i].x - c.x, p.pts[i].z - c.z);
+        if (d < radius + p.w) return true;
+      }
+    }
+    return false;
+  }
+
+  /** 出したものを全部片付ける（出している最中ならそこでやめる） */
+  clear(): void {
+    if (this.active) this.finish();
+    this.current = null;
+    this.settling = [];
+    for (const p of this.piles) this.dispose(p);
+    this.piles.length = 0;
+  }
+
+  /** 固定時間刻みで呼ぶ */
+  update(dt: number): void {
+    this.t += dt;
+    if (this.phase === 'wait' && (this.settled() || this.t > WAIT_MAX)) this.begin();
+    const p = this.current;
+    if (p) {
+      // 出している間：力んで小刻みに震える（出だしはなめらかに）
+      this.y.tremble = PUSH_TREMBLE * Math.min(1, this.t * 3);
+      const total = p.len[p.len.length - 1];
+      p.shown = Math.min(total, p.shown + SPEED * this.y.shape.radius * dt);
+      if (p.shown >= total) {
+        this.current = null;
+        p.settle = 0;
+        p.detached = 0; // 出し終わったら体から切り離す
+        this.settling.push(p);
+        this.relieved();
+      }
+      this.build(p);
+    }
+    for (let i = this.settling.length - 1; i >= 0; i--) {
+      const s = this.settling[i];
+      if (s.settle < SETTLE_TIME) s.settle += dt;
+      if (s.detached >= 0 && s.detached < SETTLE_TIME) s.detached += dt;
+      this.build(s);
+      if (s.settle >= SETTLE_TIME && (s.detached < 0 || s.detached >= SETTLE_TIME)) this.settling.splice(i, 1);
+    }
+    if (this.phase === 'relief' && this.t > RELIEF_TIME) this.finish();
+  }
+
+  /** 出し終わった：震えを止め、一歩前へ跳ねて、感動した顔で「すっきりー」 */
+  private relieved(): void {
+    const y = this.y;
+    this.phase = 'relief';
+    this.t = 0;
+    y.tremble = 0;
+    showFace(y, FACE_RELIEF, AT_LEAST_RELIEF);
+    const { facing } = faceFrame(y);
+    // 立っていれば一歩前へ跳ねる（寝転がっているときは跳ねない）
+    if (!y.locomotion.isLying) y.impulse(facing.x * HOP_FORWARD, HOP_UP, facing.z * HOP_FORWARD);
+    const R = y.shape.radius;
+    const pos = new THREE.Vector3(y.center.x, y.center.y + y.height * 0.5 + R * 0.25, y.center.z).addScaledVector(facing, R * 0.9);
+    y.texts.say('すっきりー', pos, R * 0.42, RELIEF_TIME, new THREE.Vector3(facing.x * R * 0.25, R * 0.12, facing.z * R * 0.25));
+  }
+
+  private finish(): void {
+    this.phase = 'none';
+    this.y.tremble = 0;
+    this.y.face.override = null;
+    this.y.locomotion.release();
+  }
+
+  /** 道筋を決める：出口のすぐ内側から外へ出て地面まで下り、地面に寝そべって真っすぐ後ろへ伸びる */
+  private makePile(exit: THREE.Vector3, nrm: THREE.Vector3): Pile {
+    const R = this.y.shape.radius;
+    const w = HALF_WIDTH * R, h = HALF_HEIGHT * R;
+    // 出す向き：出口の法線の水平成分。寝転がって出口が真下（体の下）や真上を向いているときは、
+    // 体の底の向き（体の下向きが寝転がって傾いた向き）の水平成分＝頭と反対の側
+    const out = nrm.clone().setY(0);
+    if (out.lengthSq() < 0.09) {
+      const down = new THREE.Vector3(0, -1, 0).applyQuaternion(this.y.body.rotation).setY(0);
+      if (down.lengthSq() > 0.0025) out.copy(down);
+      else out.copy(exit).sub(this.y.center).setY(0);
+    }
+    if (out.lengthSq() < 1e-6) out.set(0, 0, -1);
+    out.normalize();
+    // 出口のすぐ内側（つなぎ目が体に隠れるように）から、地面に寝そべる所へ
+    // 出口では体の表面に垂直に出てくる（水平に押し出すと、斜めの表面を太い塊が横切ってしまう）。
+    // 法線が真下を向いているとき（体の下の出口）は、地面に沿って横へ出る
+    const n = nrm.clone().normalize();
+    if (n.y < -0.5) n.lerp(out, 0.7).normalize();
+    const a = exit.clone().addScaledVector(n, -w * 0.6);
+    a.y = Math.max(a.y, h);
+    const c1 = exit.clone().addScaledVector(n, w * 0.9);
+    c1.y = Math.max(c1.y, h);
+    // 地面に着く所：出口が高いほど（腹ばいで背中側が上がったとき）少し離れた所へ垂れる
+    const drop = Math.max(0, exit.y - h);
+    const g = new THREE.Vector3(exit.x, h, exit.z).addScaledVector(out, w * 0.7 + drop * 0.6);
+    // 着く手前は上から下りてくる（高い所から垂れて、地面に寝そべる）
+    const c2 = g.clone().addScaledVector(out, -w * 0.5).add(new THREE.Vector3(0, drop * 0.5, 0));
+    const end = g.clone().addScaledVector(out, LENGTH * R);
+    const raw: THREE.Vector3[] = [];
+    const n1 = 16;
+    for (let i = 0; i < n1; i++) raw.push(bezier(a, c1, c2, g, i / n1));
+    const n2 = 48;
+    for (let i = 0; i <= n2; i++) raw.push(g.clone().lerp(end, i / n2));
+    const len = [0];
+    for (let i = 1; i < raw.length; i++) len.push(len[i - 1] + raw[i].distanceTo(raw[i - 1]));
+    // 体の表面を出る所：道筋で出口に一番近い点の少し先（太さの分だけ体から離れた所）
+    let ei = 0;
+    for (let i = 1; i < n1; i++) if (raw[i].distanceTo(exit) < raw[ei].distanceTo(exit)) ei = i;
+    const exitS = Math.min(len[n1], len[ei] + h * 0.5);
+    const geometry = new THREE.BufferGeometry();
+    const group = new THREE.Group();
+    group.add(new THREE.Mesh(geometry, this.outline), new THREE.Mesh(geometry, this.material));
+    group.children.forEach((m) => (m.frustumCulled = false));
+    const side = new THREE.Vector3(0, 1, 0).cross(out).normalize();
+    return { group, geometry, pts: raw, len, ground: len[n1], shown: 0, settle: -1, w, h, side, detached: -1, exitS };
+  }
+
+  /**
+   * 太さの比（道筋に沿った長さ s。今出ている長さ shown）。出したものは道筋に沿って先へ押し出されるので、
+   * 位置 s にあるのは、出し終わったときに total - shown + s の所に来る部分（先頭は先に出た一番太い所）
+   */
+  private thickness(s: number, shown: number, total: number): number {
+    const u = THREE.MathUtils.clamp((total - shown + s) / total, 0, 1);
+    return END_RATIO + (1 - END_RATIO) * Math.pow(THREE.MathUtils.smoothstep(u, 0, THICK_AT), 0.8);
+  }
+
+  /** 今出ている長さまでの塊を作る。先は丸く閉じる */
+  private build(p: Pile): void {
+    const total = p.len[p.len.length - 1];
+    const settle = p.settle < 0 ? 0 : THREE.MathUtils.smoothstep(p.settle, 0, SETTLE_TIME);
+    const W = p.w * (1 + (SETTLE_W - 1) * settle), H = p.h * (1 + (SETTLE_H - 1) * settle);
+    const step = p.w * RING_STEP;
+    const rings: Ring[] = [];
+    // 出し終わって体が離れたら、体に入っていた根元の分を除き、残りを地面に下ろす（落ちて寝そべる）。
+    // 寝転がったまま体が動かないときは、根元は体の中に残す（下ろすと帽子などを突き抜ける）
+    const drop = p.detached < 0 ? 0 : THREE.MathUtils.smoothstep(p.detached, 0, SETTLE_TIME);
+    // 切り離したら、体の中にあった根元（exitS より手前）を消す
+    const from = p.detached < 0 ? 0 : p.exitS;
+    let k = 0;
+    for (let s = from; ; s += step) {
+      const last = s >= p.shown;
+      const d = Math.min(s, p.shown);
+      while (k < p.len.length - 2 && p.len[k + 1] < d) k++;
+      const f = THREE.MathUtils.clamp((d - p.len[k]) / Math.max(1e-6, p.len[k + 1] - p.len[k]), 0, 1);
+      const c = p.pts[k].clone().lerp(p.pts[k + 1], f);
+      const t = p.pts[k + 1].clone().sub(p.pts[k]).normalize();
+      const side = p.side;
+      const up = new THREE.Vector3().crossVectors(t, side).normalize();
+      const th = this.thickness(d, p.shown, total);
+      const hh = H * th;
+      // 地面に寝そべる所は、底が地面に着く高さまで下げる（細い所も浮かない）
+      if (c.y <= p.h * 1.01) c.y = Math.min(c.y, hh);
+      else c.y += (hh - c.y) * drop;
+      rings.push({ c, t: drop > 0 && d < p.ground ? t.clone().setY(t.y * (1 - drop)).normalize() : t, side, up, w: W * th, h: hh });
+      if (last) break;
+    }
+    // 根元の丸いふた（体の中に隠れている間は見えない。体が離れると見える）：最初の断面から後ろへ半球
+    const first = rings[0];
+    const head: Ring[] = [];
+    for (let i = 8; i >= 1; i--) {
+      const a = (i / 8) * (Math.PI / 2);
+      const kc = Math.max(Math.cos(a), 0.02);
+      const c = first.c.clone().addScaledVector(first.t, -Math.sin(a) * Math.min(first.w, first.h * 1.4));
+      // 地面に寝そべっている所だけ、底を地面に着けたまま閉じる（宙にあるときはそのまま丸く閉じる）
+      if (first.c.y <= first.h * 1.01) c.y = Math.min(c.y, first.h * kc);
+      head.push({ c, t: first.t, side: first.side, up: first.up, w: first.w * kc, h: first.h * kc });
+    }
+    rings.unshift(...head);
+    // 先の丸いふた：先の断面から、だ円の半球（底は地面に着いたまま）
+    const end = rings[rings.length - 1];
+    const caps = 8;
+    const capLen = Math.min(end.w, end.h * 1.4);
+    for (let i = 1; i <= caps; i++) {
+      const a = (i / caps) * (Math.PI / 2);
+      const kc = Math.max(Math.cos(a), 0.02);
+      const c = end.c.clone().addScaledVector(end.t, Math.sin(a) * capLen);
+      if (end.c.y <= end.h * 1.01) c.y = Math.min(c.y, end.h * kc);
+      rings.push({ c, t: end.t, side: end.side, up: end.up, w: end.w * kc, h: end.h * kc });
+    }
+    const pos = new Float32Array(rings.length * (SIDES + 1) * 3);
+    const v = new THREE.Vector3();
+    rings.forEach((ring, i) => {
+      for (let j = 0; j <= SIDES; j++) {
+        const a = (j / SIDES) * Math.PI * 2;
+        v.copy(ring.c).addScaledVector(ring.side, Math.cos(a) * ring.w).addScaledVector(ring.up, Math.sin(a) * ring.h);
+        // 底は地面で平らにつぶれる
+        if (v.y < FLOOR) v.y = FLOOR;
+        const o = (i * (SIDES + 1) + j) * 3;
+        pos[o] = v.x; pos[o + 1] = v.y; pos[o + 2] = v.z;
+      }
+    });
+    const index: number[] = [];
+    for (let i = 0; i < rings.length - 1; i++) {
+      for (let j = 0; j < SIDES; j++) {
+        const a = i * (SIDES + 1) + j, b = a + SIDES + 1;
+        index.push(a, a + 1, b, b, a + 1, b + 1);
+      }
+    }
+    const g = p.geometry;
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setIndex(index);
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
+  }
+
+  private dispose(p: Pile): void {
+    this.object.remove(p.group);
+    p.geometry.dispose();
+  }
+}
+
+function bezier(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, t: number): THREE.Vector3 {
+  const u = 1 - t;
+  return a.clone().multiplyScalar(u * u * u)
+    .addScaledVector(b, 3 * u * u * t)
+    .addScaledVector(c, 3 * u * t * t)
+    .addScaledVector(d, t * t * t);
+}

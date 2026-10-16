@@ -177,6 +177,42 @@ export class Outfit {
     return true;
   }
 
+  /**
+   * 体の表面の、向き az（顔の正面が 0、背中が π）・高さ height（床からの、高さに対する比）の所の
+   * 今の位置と法線（ワールド座標）。求められないときは false
+   */
+  surfacePoint(az: number, height: number, pos: THREE.Vector3, nrm: THREE.Vector3): boolean {
+    if (this.index.fx.length === 0) return false;
+    this.refreshArrays();
+    readVertex(this.ctx.pos, this.ctx.nrm, this.index.nearestAzHeight(az, height), pos, nrm);
+    return true;
+  }
+
+  /**
+   * 体の表面のうち、向き az のまわり ±azRange・高さ（床からの、静止形状の高さに対する比）maxHeight 以下の範囲で、
+   * 今の高さ（ワールド）が targetY に一番近く、地面を向いていない所の今の位置と法線。求められないときは false
+   */
+  surfacePointAt(az: number, azRange: number, maxHeight: number, targetY: number, pos: THREE.Vector3, nrm: THREE.Vector3): boolean {
+    const ix = this.index;
+    if (ix.fx.length === 0) return false;
+    this.refreshArrays();
+    const yMax = ix.minY + (ix.maxY - ix.minY) * maxHeight;
+    const p = new THREE.Vector3(), n = new THREE.Vector3();
+    let best = -1, bs = Infinity;
+    for (let i = 0; i < ix.az.length; i++) {
+      let da = Math.abs(ix.az[i] - az);
+      if (da > Math.PI) da = 2 * Math.PI - da;
+      if (da > azRange || ix.rest[3 * i + 1] > yMax) continue;
+      readVertex(this.ctx.pos, this.ctx.nrm, i, p, n);
+      if (n.y < -0.3) continue;
+      const score = Math.abs(p.y - targetY) + da * 0.05;
+      if (score < bs) { bs = score; best = i; }
+    }
+    if (best < 0) return false;
+    readVertex(this.ctx.pos, this.ctx.nrm, best, pos, nrm);
+    return true;
+  }
+
   /** 描画の直前に呼ぶ（体の描画メッシュを更新した後） */
   update(): void {
     if (this.accessories.length === 0) return;

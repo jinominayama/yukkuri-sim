@@ -71,6 +71,24 @@ export class FaceIndex {
     return best;
   }
 
+  /**
+   * 左右の角度 az（顔の正面が 0、背中が π）の向きで、静止形状の高さが床から height（高さに対する比）の所の頂点。
+   * 同じ向き・高さの中では一番外側（体の表面）のもの
+   */
+  nearestAzHeight(az: number, height: number): number {
+    const y = this.minY + (this.maxY - this.minY) * height;
+    const tol = (this.maxY - this.minY) * 0.04;
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < this.az.length; i++) {
+      let da = Math.abs(this.az[i] - az);
+      if (da > Math.PI) da = 2 * Math.PI - da;
+      const dy = Math.abs(this.rest[3 * i + 1] - y);
+      const d = da * da + (dy / tol) ** 2 * 0.05;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
   /** 横の位置 fx の縦の列で、静止形状の床から上へ margin（高さに対する比）の位置の fy */
   lowestFy(fx: number, margin: number): number {
     const floor = this.minY + (this.maxY - this.minY) * margin;

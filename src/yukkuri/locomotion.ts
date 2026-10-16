@@ -297,6 +297,16 @@ export class Locomotion {
     return this.state === 'idle';
   }
 
+  /** 横になり終えて止まっている（倒れ込み・寝返りの途中ではない）か */
+  get resting(): boolean {
+    return this.state === 'lying';
+  }
+
+  /** 横になっている体勢（倒れ込み中を含む）。立っていれば null */
+  get lyingPose(): LyingPose | null {
+    return this.isLying ? (this.lieSign > 0 ? 'prone' : 'supine') : null;
+  }
+
   /** 横になっている（倒れ込み中を含む）か */
   get isLying(): boolean {
     return this.state === 'lieDown' || this.state === 'lying';

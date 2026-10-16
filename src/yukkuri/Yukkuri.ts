@@ -10,6 +10,7 @@ import { createBlobShadow } from '../render/blobShadow';
 import { Face } from '../face/Face';
 import { Outfit } from '../character/Outfit';
 import { Feeding } from './feeding';
+import { Dropping } from './dropping';
 import { TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
@@ -34,6 +35,11 @@ export const DEFAULT_LIFE: LifeParams = { breath: 0.03, breathRate: 0.3 };
 const FIRST_CHARACTER = 'marisa';
 /** 震え（tremble）の速さ（回/秒） */
 const TREMBLE_RATE = 13;
+/** 起き上がるとき、体の中心からこの距離（胴の半径に対する比）以内にうんうんがあれば、先に寝返りで離れる */
+const GETUP_CLEAR = 1.1;
+const MAX_ROLLS_ASIDE = 2;
+/** 起き上がるときに体がお尻の側へずれる量の見込み（胴の半径に対する比） */
+const GETUP_SHIFT = 1.6;
 
 export class Yukkuri {
   readonly root = new THREE.Group();
@@ -53,8 +59,13 @@ export class Yukkuri {
   readonly locomotion: Locomotion;
   /** 物を食べる動き（食べ物・食べかす・文字は feeding.object をシーンに置いて表示する） */
   readonly feeding: Feeding;
+  /** うんうん（出したものは dropping.object をシーンに置いて表示する） */
+  readonly dropping: Dropping;
   /** まわりに出す文字（texts.object をシーンに置いて表示する） */
   readonly texts = new TextFx();
+  /** 起き上がる前に寝返りで横へずれている最中か、と、あと何回寝返ってよいか */
+  private rollingAside = false;
+  private rollsLeft = 0;
   /** 体の見た目だけを小刻みに震わせる振れ幅（胴の半径に対する比。0 で止まる。物理には触らない） */
   tremble = 0;
   readonly bodyMaterial: THREE.ShaderMaterial;
@@ -98,6 +109,7 @@ export class Yukkuri {
 
     this.locomotion = new Locomotion(this.body, this.move);
     this.feeding = new Feeding(this);
+    this.dropping = new Dropping(this);
     this.applyShape();
     // 初めて開いたときは魔理沙で始める（テスト版）
     if (this.outfit.fresh) {
@@ -160,6 +172,33 @@ export class Yukkuri {
     this.skin.update(this.body);
   }
 
+  /**
+   * 起き上がる。寝転んだ体のそばにうんうんがあって、そのまま起き上がると体が貫通しそうなら、
+   * 先に寝返りで横へ転がって離れてから起き上がる（寝返りは 2 回まで）
+   */
+  getUp(): void {
+    const loco = this.locomotion;
+    if (!loco.isLying) return;
+    // 起き上がると、体はお尻の側（体の下向きが寝転んで傾いた向き）へずれる。今の位置と、ずれた先の両方で見る
+    const R = this.shape.radius;
+    const c = this.body.center;
+    const bottom = new THREE.Vector3(0, -1, 0).applyQuaternion(this.body.rotation).setY(0);
+    const after = bottom.lengthSq() > 1e-4 ? c.clone().addScaledVector(bottom.normalize(), R * GETUP_SHIFT) : c;
+    if (this.dropping.near(c, R * GETUP_CLEAR) || this.dropping.near(after, R * GETUP_CLEAR)) {
+      if (!this.rollingAside) {
+        this.rollingAside = true;
+        this.rollsLeft = MAX_ROLLS_ASIDE;
+      }
+      if (this.rollsLeft > 0) {
+        this.rollsLeft--;
+        loco.lieDown(loco.lyingPose === 'prone' ? 'supine' : 'prone');
+        return;
+      }
+    }
+    this.rollingAside = false;
+    loco.getUp();
+  }
+
   /** 点 point を方向 dir につつく */
   poke(point: THREE.Vector3, dir: THREE.Vector3, strength: number): void {
     const v = dir.clone().normalize().multiplyScalar(strength);
@@ -191,8 +230,11 @@ export class Yukkuri {
     this.time += dt;
     this.face.update(dt);
     this.body.volumeScale = 1 + this.life.breath * Math.sin(this.time * Math.PI * 2 * this.life.breathRate);
+    // 寝返りで横へずれてから起き上がる：寝返りが終わったら、まだ塊に近ければもう一度、離れていれば起き上がる
+    if (this.rollingAside && this.locomotion.resting) this.getUp();
     this.locomotion.update(dt, this.physics.gravity);
     this.feeding.update(dt);
+    this.dropping.update(dt);
     this.texts.update(dt);
     this.body.step(dt, this.physics);
   }

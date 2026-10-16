@@ -87,14 +87,14 @@ export class Feeding {
 
   /** 食べ物を目の前に置いて食べ始める。寝転がっていれば起き上がってから。食べている最中なら何もしない */
   start(): boolean {
-    if (this.active) return false;
+    if (this.active || this.y.dropping.active) return false;
     const loco = this.y.locomotion;
     loco.hold();
     this.t = 0;
     // 寝転がっていれば起き上がってから。跳ねている途中など体勢が変わっている途中なら、止まるまで待つ
     // （途中の向きで食べ物を置くと、顔の正面からずれる）
     if (loco.isLying) {
-      loco.getUp();
+      this.y.getUp();
       this.phase = 'wait';
     } else if (!loco.idle) {
       this.phase = 'wait';

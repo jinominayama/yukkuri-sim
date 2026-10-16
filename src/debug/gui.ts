@@ -141,11 +141,15 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   // ごはん：食べ物を目の前に置くと、見つめる → むーしゃむーしゃ → しあわせー の順に食べる
   const meal = gui.addFolder('ごはん');
   meal.add({ f: () => y.feeding.start() }, 'f').name('食べ物をあげる');
+  // うんうん：体の後ろから餡子を絞り出す。出したものは「片付ける」まで残る
+  const poo = gui.addFolder('うんうん');
+  poo.add({ f: () => y.dropping.start() }, 'f').name('うんうんする');
+  poo.add({ f: () => y.dropping.clear() }, 'f').name('片付ける');
 
   const pose = gui.addFolder('体勢');
   pose.add({ f: () => y.locomotion.lieDown('prone') }, 'f').name('腹ばいになる');
   pose.add({ f: () => y.locomotion.lieDown('supine') }, 'f').name('仰向けになる');
-  pose.add({ f: () => y.locomotion.getUp() }, 'f').name('起き上がる');
+  pose.add({ f: () => y.getUp() }, 'f').name('起き上がる');
 
   const soft = gui.addFolder('柔らかさ');
   soft.add(y.physics, 'shapeStiffness', 0, 1, 0.005).name('形に戻る強さ（通常）');
