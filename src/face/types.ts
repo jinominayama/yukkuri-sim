@@ -29,7 +29,6 @@ export type BrowKind =
 /** 口の形 */
 export type MouthKind =
   | 'none'
-  | 'neutral'   // 小さく微笑む線
   | 'smirk'     // ゆっくりらしい、にやっとした閉じた口（中央が少しへこんだ〜形の細い線）
   | 'grin'      // 歯を見せて笑う（強がり）
   | 'smileOpen' // 開けて笑う（口角の跳ねた上の線の下に、舌の見える器形の口）

@@ -75,7 +75,6 @@ export const PARTS: PartDef[] = [
     label: '口',
     options: [
       { id: 'smirk', name: 'にやり', value: { mouth: { kind: 'smirk' } } },
-      { id: 'omega', name: 'ω', value: { mouth: { kind: 'neutral' } } },
       { id: 'smile', name: 'にっこり', value: { mouth: { kind: 'smileOpen' } } },
       { id: 'smileSmall', name: 'ほほえみ', value: { mouth: { kind: 'smileOpen', open: 0.55 } } },
       { id: 'openSmall', name: 'ぽかん', value: { mouth: { kind: 'openSmall' } } },

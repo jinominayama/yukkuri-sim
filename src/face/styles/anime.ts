@@ -470,7 +470,6 @@ export class AnimeStyle implements FaceStyle {
 
   protected drawMouthShape(ctx: CanvasRenderingContext2D, kind: MouthKind, open: number, width: number): void {
     switch (kind) {
-      case 'neutral': this.mouthNeutral(ctx); break;
       case 'smirk': this.mouthSmirk(ctx, width); break;
       case 'grin': this.mouthGrin(ctx, width); break;
       case 'smileOpen': this.mouthSmileOpen(ctx, open, width); break;
@@ -764,21 +763,6 @@ export class AnimeStyle implements FaceStyle {
     ctx.fillStyle = 'rgba(226, 132, 108, 0.6)';
     this.strokeVar(ctx, this.curve([[-0.42, -0.68], [-0.25, -0.65], [-0.08, -0.68]], W, y), lw * 0.4, lw * 1.2, lw * 0.4);
     this.strokeVar(ctx, this.curve([[1.0, -0.24], [1.05, -0.32], [1.0, -0.42]], W, y), lw * 0.3, lw * 0.9, lw * 0.3);
-  }
-
-  /** 小さな ω 形の口 */
-  protected mouthNeutral(ctx: CanvasRenderingContext2D): void {
-    const { mouthY: y } = this.layout;
-    this.droolFrom = [0.03, y - 0.022];
-    ctx.strokeStyle = this.palette.line;
-    ctx.lineWidth = this.lineWidth;
-    ctx.beginPath();
-    ctx.moveTo(-0.075, y + 0.02);
-    ctx.quadraticCurveTo(-0.06, y - 0.025, -0.03, y - 0.022);
-    ctx.quadraticCurveTo(-0.005, y - 0.02, 0, y);
-    ctx.quadraticCurveTo(0.005, y - 0.02, 0.03, y - 0.022);
-    ctx.quadraticCurveTo(0.06, y - 0.025, 0.075, y + 0.02);
-    ctx.stroke();
   }
 
   protected mouthO(ctx: CanvasRenderingContext2D, open: number): void {
