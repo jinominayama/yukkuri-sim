@@ -124,6 +124,10 @@ function bodyCenter(pos: Float32Array): THREE.Vector3 {
 
 /** 地面に沿わせた所の、道筋の地面からの高さ（編み目の幅に対する比。編み目の厚みの半分ほど） */
 const GROUND_FLOAT = 0.35;
+/** 道筋の一番低い所が、地面に沿わせる高さのこれ倍より高くなったら、地面から離れたとみなす */
+const LIFT_OFF = 2.5;
+/** 地面に沿わせた形と体に沿った形の間を移るとき、update 1回に縮める差の割合 */
+const LAY_FOLLOW = 0.15;
 /** 地面に沿わせた所で、編み目の向きを寝かせ終えるまでの距離（GROUND_FLOAT の高さに対する比） */
 const GROUND_TURN = 6;
 
@@ -195,6 +199,9 @@ export class Braid implements Accessory {
   private counted = false;
   /** 地面に沿わせ始める所（道筋に沿った距離）。小さな動きにはゆっくりしか追従しない（-1 は地面に届いていない） */
   private groundAt = -1;
+  /** 地面に届いているか（離れるのははっきり離れたときだけ）と、地面に沿わせた形をどれだけ混ぜているか（0〜1） */
+  private onGround = false;
+  private laid = 0;
   /** 編み始めで除いている長さ（道筋に沿った距離。-1 は未定） */
   private trimmed = -1;
   /** 点が帽子に隠れているか（帽子をかぶっているとき Outfit が設定する）。編み始めを帽子の外へ出すのに使う */
@@ -246,6 +253,8 @@ export class Braid implements Accessory {
     this.counted = false;
     this.trimmed = -1;
     this.groundAt = -1;
+    this.onGround = false;
+    this.laid = 0;
     for (let i = 0; i < PATH; i++) {
       const fy = st.top + ((bottom - st.top) * i) / (PATH - 1);
       // 下へ行くほど少し外側（体の丸みに沿って広がる）
@@ -278,12 +287,31 @@ export class Braid implements Accessory {
     // 地面に届いたら、そこから先は地面に沿って体の外へ流す（地面で押しつぶされないように）。
     // 体の下側は地面とほぼ平行なので、呼吸で体がわずかに上下するだけで届く所が道筋に沿って大きく動き、
     // 曲がり角の編み目の向きが揺れる。届く所も、小さな動きにはゆっくりしか追従させない
+    // 地面に届いたかは、届いたらすぐ「届いた」に、離れるのは道筋がはっきり地面から離れたときだけにする
+    // （寝転んで付け根が地面すれすれだと、わずかな揺れで届く・届かないが行き来する）。
+    // 地面に沿わせた形と体に沿った形の間は、LAY_FOLLOW の割合ずつなめらかに移る（一度に切り替えると、編み目が床と体の間を跳ぶ）
     const floor = st.width * R * GROUND_FLOAT;
     const reach = groundCrossing(pts, floor);
-    if (reach < 0) this.groundAt = -1; // 浮いている（跳んでいるときなど）
-    else if (this.groundAt < 0) this.groundAt = reach;
-    else this.groundAt += (reach - this.groundAt) * (Math.abs(reach - this.groundAt) > st.segment * R ? TRIM_FOLLOW : SPACING_FOLLOW);
-    if (this.groundAt >= 0) layOnGround(pts, nrms, this.groundAt, floor, bodyCenter(ctx.pos));
+    if (reach >= 0) {
+      this.onGround = true;
+      if (this.groundAt < 0) this.groundAt = reach;
+      else this.groundAt += (reach - this.groundAt) * (Math.abs(reach - this.groundAt) > st.segment * R ? TRIM_FOLLOW : SPACING_FOLLOW);
+    } else if (Math.min(...pts.map((q) => q.y)) > floor * LIFT_OFF) {
+      this.onGround = false; // 浮いている（跳んでいるときなど）
+    }
+    this.laid += ((this.onGround ? 1 : 0) - this.laid) * LAY_FOLLOW;
+    if (!this.onGround && this.laid < 0.01) {
+      this.laid = 0;
+      this.groundAt = -1;
+    }
+    if (this.groundAt >= 0 && this.laid > 0) {
+      const lp = pts.map((q) => q.clone()), ln = nrms.map((q) => q.clone());
+      layOnGround(lp, ln, this.groundAt, floor, bodyCenter(ctx.pos));
+      for (let i = 0; i < pts.length; i++) {
+        pts[i].lerp(lp[i], this.laid);
+        nrms[i].lerp(ln[i], this.laid).normalize();
+      }
+    }
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
     const total = cum[cum.length - 1];
