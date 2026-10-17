@@ -54,6 +54,7 @@ export class Outfit {
   /** 体型ごとに持つ前の版で保存した調整値（最初に使う体型に引き継ぐ） */
   private legacyFit: Fit | null = null;
   private readonly index = new FaceIndex();
+  private buildCount = 0;
   private readonly ctx: AttachContext;
 
   constructor(geometry: THREE.BufferGeometry, bodyMaterial: THREE.ShaderMaterial, outlineMaterial: THREE.ShaderMaterial) {
@@ -157,6 +158,7 @@ export class Outfit {
 
   /** 体型（静止形状・顔の位置）が変わったときに呼ぶ */
   rebuild(): void {
+    this.buildCount++;
     const u = this.ctx.bodyMaterial.uniforms;
     const rest = this.ctx.geometry.getAttribute('aRest');
     if (!rest) return;
@@ -177,6 +179,18 @@ export class Outfit {
     return true;
   }
 
+  /** 顔座標 (fx, fy) の所の、静止形状での床からの高さ（体の高さに対する比）。求められないときは -1 */
+  restHeightAt(fx: number, fy: number): number {
+    const ix = this.index;
+    if (ix.fx.length === 0) return -1;
+    return (ix.rest[3 * ix.nearest(fx, fy) + 1] - ix.minY) / Math.max(1e-6, ix.maxY - ix.minY);
+  }
+
+  /** 体型を作り直した回数（作り直すと頂点の番号の意味が変わるので、番号を覚えている側が選び直すのに使う） */
+  get builds(): number {
+    return this.buildCount;
+  }
+
   /**
    * 体の表面の、向き az（顔の正面が 0、背中が π）・高さ height（床からの、高さに対する比）の所の
    * 今の位置と法線（ワールド座標）。求められないときは false
@@ -193,8 +207,20 @@ export class Outfit {
    * 今の高さ（ワールド）が targetY に一番近く、地面を向いていない所の今の位置と法線。求められないときは false
    */
   surfacePointAt(az: number, azRange: number, maxHeight: number, targetY: number, pos: THREE.Vector3, nrm: THREE.Vector3): boolean {
+    const best = this.surfaceIndexAt(az, azRange, maxHeight, targetY);
+    if (best < 0) return false;
+    readVertex(this.ctx.pos, this.ctx.nrm, best, pos, nrm);
+    return true;
+  }
+
+  /**
+   * surfacePointAt の頂点の番号（vertexPoint で今の位置を読む）。求められないときは -1。
+   * minNormalY：法線の上下の成分がこれより下向きの所（地面を向いている所）は選ばない。
+   * azWeight：高さの差に足す、向きの差（ラジアン）の重み（大きいほど向き az の線から外れない）
+   */
+  surfaceIndexAt(az: number, azRange: number, maxHeight: number, targetY: number, minNormalY = -0.3, azWeight = 0.05): number {
     const ix = this.index;
-    if (ix.fx.length === 0) return false;
+    if (ix.fx.length === 0) return -1;
     this.refreshArrays();
     const yMax = ix.minY + (ix.maxY - ix.minY) * maxHeight;
     const p = new THREE.Vector3(), n = new THREE.Vector3();
@@ -204,13 +230,17 @@ export class Outfit {
       if (da > Math.PI) da = 2 * Math.PI - da;
       if (da > azRange || ix.rest[3 * i + 1] > yMax) continue;
       readVertex(this.ctx.pos, this.ctx.nrm, i, p, n);
-      if (n.y < -0.3) continue;
-      const score = Math.abs(p.y - targetY) + da * 0.05;
+      if (n.y < minNormalY) continue;
+      const score = Math.abs(p.y - targetY) + da * azWeight;
       if (score < bs) { bs = score; best = i; }
     }
-    if (best < 0) return false;
-    readVertex(this.ctx.pos, this.ctx.nrm, best, pos, nrm);
-    return true;
+    return best;
+  }
+
+  /** 体の頂点 i の今の位置と法線（ワールド座標） */
+  vertexPoint(i: number, pos: THREE.Vector3, nrm: THREE.Vector3): void {
+    this.refreshArrays();
+    readVertex(this.ctx.pos, this.ctx.nrm, i, pos, nrm);
   }
 
   /** 描画の直前に呼ぶ（体の描画メッシュを更新した後）。still：立ち止まって落ち着いているか */

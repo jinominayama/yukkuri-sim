@@ -11,6 +11,7 @@ import { Face } from '../face/Face';
 import { Outfit } from '../character/Outfit';
 import { Feeding } from './feeding';
 import { Dropping } from './dropping';
+import { Peni } from './peni';
 import { TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
@@ -63,6 +64,8 @@ export class Yukkuri {
   readonly feeding: Feeding;
   /** うんうん（出したものは dropping.object をシーンに置いて表示する） */
   readonly dropping: Dropping;
+  /** ぺにぺに（顔の正面の下に生える円錐） */
+  readonly peni: Peni;
   /** まわりに出す文字（texts.object をシーンに置いて表示する） */
   readonly texts = new TextFx();
   /** 起き上がる前に寝返りで横へずれている最中か、と、あと何回寝返ってよいか */
@@ -112,6 +115,8 @@ export class Yukkuri {
     this.locomotion = new Locomotion(this.body, this.move);
     this.feeding = new Feeding(this);
     this.dropping = new Dropping(this);
+    this.peni = new Peni(this);
+    this.root.add(this.peni.object);
     this.applyShape();
     // 初めて開いたときは魔理沙で始める（テスト版）
     if (this.outfit.fresh) {
@@ -252,8 +257,10 @@ export class Yukkuri {
     } else {
       this.root.position.set(0, 0, 0);
     }
-    // 立ち止まって落ち着いたかを渡す（三つ編みの編み目の数は、動いている間は変えない）
-    this.outfit.update(this.locomotion.idleTime > STILL_TIME);
+    // 立ち止まって落ち着いたかを渡す（三つ編みの編み目の数・ぺにぺにの生やす所は、動いている間は選び直さない）
+    const still = this.locomotion.idleTime > STILL_TIME;
+    this.outfit.update(still);
+    this.peni.update(still);
     this.face.render();
 
     // 影：重心の真下。高く跳ぶほど小さく薄く

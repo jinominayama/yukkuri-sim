@@ -146,6 +146,14 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   poo.add({ f: () => y.dropping.start() }, 'f').name('うんうんする');
   poo.add({ f: () => y.dropping.clear() }, 'f').name('片付ける');
 
+  // ぺにぺに：顔の正面の下に生える円錐
+  const peni = gui.addFolder('ぺにぺに');
+  peni.add(y.peni.params, 'show').name('出す');
+  peni.add(y.peni.params, 'at', 0, 1, 0.01).name('位置（口の下〜体の下端）');
+  peni.add(y.peni.params, 'length', 0.05, 0.6, 0.01).name('長さ');
+  peni.add(y.peni.params, 'radius', 0.02, 0.2, 0.005).name('太さ');
+  peni.add(y.peni.params, 'rise', 0, 1, 0.05).name('上向き');
+
   const pose = gui.addFolder('体勢');
   pose.add({ f: () => y.locomotion.lieDown('prone') }, 'f').name('腹ばいになる');
   pose.add({ f: () => y.locomotion.lieDown('supine') }, 'f').name('仰向けになる');
