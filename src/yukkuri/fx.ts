@@ -8,7 +8,8 @@ import type { Yukkuri } from './Yukkuri';
  *   ・showFace … 表情の一時的な上書き（目・眉・口など）。よだれ・涙など段階に要るものは足りないときだけ足す
  */
 
-interface Word { sprite: THREE.Sprite; vel: THREE.Vector3; life: number; total: number; size: number }
+/** 出している文字（say が返す。fade に渡すと早めに消せる） */
+export interface Word { sprite: THREE.Sprite; vel: THREE.Vector3; life: number; total: number; size: number }
 
 export class TextFx {
   /** 文字（体と一緒に震えないよう、シーンに直接置く） */
@@ -20,14 +21,21 @@ export class TextFx {
    * 文字を出す。pos：真ん中の位置（ワールド）、height：文字の高さ（ワールド）、
    * life：出している時間（秒）、vel：浮かぶ速さ（ワールド / 秒）
    */
-  say(text: string, pos: THREE.Vector3, height: number, life: number, vel: THREE.Vector3): void {
+  say(text: string, pos: THREE.Vector3, height: number, life: number, vel: THREE.Vector3): Word {
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.texture(text), transparent: true, depthTest: false }));
     sprite.renderOrder = 10;
     const img = sprite.material.map!.image as HTMLCanvasElement;
     sprite.scale.set((height * img.width) / img.height, height, 1);
     sprite.position.copy(pos);
     this.object.add(sprite);
-    this.words.push({ sprite, vel: vel.clone(), life, total: life, size: height });
+    const word = { sprite, vel: vel.clone(), life, total: life, size: height };
+    this.words.push(word);
+    return word;
+  }
+
+  /** 出している文字 word を、time 秒で薄くして消す（まだ残っていて、それより長く残る予定なら） */
+  fade(word: Word, time = 0.2): void {
+    if (this.words.includes(word)) word.life = Math.min(word.life, time);
   }
 
   /** 固定時間刻みで呼ぶ：浮かせて、時間が来たら消す */

@@ -13,6 +13,7 @@ import { Feeding } from './feeding';
 import { Dropping } from './dropping';
 import { Peni } from './peni';
 import { Exercise } from './exercise';
+import { Poke } from './poke';
 import { TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
@@ -65,6 +66,8 @@ export class Yukkuri {
   readonly feeding: Feeding;
   /** うんうん（出したものは dropping.object をシーンに置いて表示する） */
   readonly dropping: Dropping;
+  /** つつかれたときの反応（へこんで弾む・驚いた顔） */
+  private readonly poking: Poke;
   /** うんうんたいそう（歌に合わせて体を動かし、最後にうんうんを出す） */
   readonly exercise: Exercise;
   /** ぺにぺに（顔の正面の下に生える円錐） */
@@ -120,6 +123,7 @@ export class Yukkuri {
     this.dropping = new Dropping(this);
     this.dropping.usePreset(this.presetId);
     this.exercise = new Exercise(this);
+    this.poking = new Poke(this);
     this.peni = new Peni(this);
     this.peni.usePreset(this.presetId);
     this.root.add(this.peni.object);
@@ -214,10 +218,9 @@ export class Yukkuri {
     loco.getUp();
   }
 
-  /** 点 point を方向 dir につつく */
+  /** 点 point を方向 dir につつく（へこんで弾み、驚いた顔をする） */
   poke(point: THREE.Vector3, dir: THREE.Vector3, strength: number): void {
-    const v = dir.clone().normalize().multiplyScalar(strength);
-    this.body.addLocalVelocity(point.x, point.y, point.z, this.shape.radius * 0.9, v.x, v.y, v.z);
+    this.poking.start(point, dir, strength);
   }
 
   /** 外から全体に速度を加える（投げる・弾き飛ばす等） */
@@ -252,6 +255,7 @@ export class Yukkuri {
     this.feeding.update(dt);
     this.dropping.update(dt);
     this.peni.step(dt);
+    this.poking.update(dt);
     this.texts.update(dt);
     this.body.step(dt, this.physics);
   }
