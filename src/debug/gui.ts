@@ -14,6 +14,8 @@ export interface ViewSettings {
   timeScale: number;
   paused: boolean;
   followCamera: boolean;
+  /** カメラの角度制限（地面の下に回り込まない）を解除する */
+  freeCamera: boolean;
   /** クリックでつつく強さ (m/s) */
   pokeStrength: number;
 }
@@ -79,6 +81,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   act.add(view, 'timeScale', 0.05, 2, 0.05).name('時間の速さ');
   act.add(view, 'paused').name('一時停止');
   act.add(view, 'followCamera').name('カメラ追従');
+  act.add(view, 'freeCamera').name('カメラの角度制限を解除');
 
   // 顔：体型プリセットとは別に管理する（体型を切り替えても変わらないのでロックは付けない）。
   // 表情のパーツは画面左上のパーツ選択画面で選ぶ

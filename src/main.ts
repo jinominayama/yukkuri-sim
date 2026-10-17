@@ -22,9 +22,25 @@ const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 100);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.maxPolarAngle = Math.PI * 0.49; // 地面の下に回り込まない
+/** カメラの上下の角度の上限（真上 0 から測る）。地面の下に回り込まない。角度制限を解除すると真下まで回せる */
+const CAMERA_MAX_POLAR = Math.PI * 0.49;
+controls.maxPolarAngle = CAMERA_MAX_POLAR;
 controls.minDistance = 1;
 controls.maxDistance = 12;
+/**
+ * Ctrl を押しながらカメラを動かし始めたら、角度制限を外す（地面の下からも見上げられる）。
+ * Ctrl を離してもカメラはそのまま（離した瞬間に跳ね戻らないように）で、次に Ctrl なしで動かし始めたときに制限を戻す
+ */
+let ctrlFreeCamera = false;
+// OrbitControls 自身より先に（capture で）ボタンの押し始めを見る
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'mouse') return;
+  ctrlFreeCamera = e.ctrlKey;
+  // OrbitControls は Ctrl を押していると左ドラッグを平行移動、右ドラッグを回転にする。
+  // Ctrl を押している間は左右の割り当てを入れ替えて、いつもどおり左で回転・右で平行移動にする
+  controls.mouseButtons.LEFT = e.ctrlKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+  controls.mouseButtons.RIGHT = e.ctrlKey ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+}, { capture: true });
 
 // 地面
 const ground = new THREE.Mesh(
@@ -52,7 +68,7 @@ yukkuri.drop(0.6);
 controls.target.set(0, yukkuri.height * 0.7, 0);
 camera.position.set(0, yukkuri.height * 0.85, 4.6);
 
-const view: ViewSettings = { timeScale: 1, paused: false, followCamera: true, pokeStrength: 3 };
+const view: ViewSettings = { timeScale: 1, paused: false, followCamera: true, freeCamera: false, pokeStrength: 3 };
 // 開発中はコンソールから触れるようにする
 if (import.meta.env.DEV) {
   /** 描画ループと無関係に seconds 秒ぶん進めて1枚描く（検証用） */
@@ -138,6 +154,9 @@ renderer.setAnimationLoop(() => {
     controls.target.add(delta);
     camera.position.add(delta);
   }
+  // 角度制限を解除していれば（設定、または Ctrl を押しながら動かし始めた）、地面の下からも見上げられる。
+  // 戻すと、上限の角度まで引き戻される
+  controls.maxPolarAngle = view.freeCamera || ctrlFreeCamera ? Math.PI : CAMERA_MAX_POLAR;
   controls.update();
   renderer.render(scene, camera);
 });
