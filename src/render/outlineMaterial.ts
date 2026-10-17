@@ -33,6 +33,7 @@ const fragmentShader = /* glsl */ `
 const accessoryVertexShader = /* glsl */ `
   ${groundClampGlsl(GROUND_OUTLINE)}
   uniform float uWidth;
+  uniform float uWidthScale; // この部品だけの太さの倍率（1 で体と同じ）
   uniform vec2 uResolution;
 
   void main() {
@@ -43,15 +44,19 @@ const accessoryVertexShader = /* glsl */ `
     vec2 dir = (projectionMatrix * vec4(mat3(viewMatrix) * nW, 0.0)).xy;
     float len = length(dir);
     if (len > 1e-5) {
-      clip.xy += (dir / len) * uWidth * 2.0 / uResolution * clip.w;
+      clip.xy += (dir / len) * uWidth * uWidthScale * 2.0 / uResolution * clip.w;
     }
     gl_Position = clip;
   }
 `;
 
+/**
+ * 体の輪郭線の材質 body と太さ・色を共有する（uniform の入れ物は同じものを使うので、体の側を変えれば一緒に変わる）。
+ * uWidthScale だけはこの材質のもの（出し入れする部品などで、この部品の線だけ細くする）
+ */
 export function createAccessoryOutlineMaterial(body: THREE.ShaderMaterial): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
-    uniforms: body.uniforms,
+    uniforms: { ...body.uniforms, uWidthScale: { value: 1 } },
     vertexShader: accessoryVertexShader,
     fragmentShader,
     side: THREE.BackSide,

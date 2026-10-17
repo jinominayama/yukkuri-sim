@@ -61,6 +61,14 @@ const EMERGE_SLIDE = 0.7;
 const EMERGE_OVER = 0.08;
 /** 出始めの太さ（設定の太さに対する比）。伸びながら設定の太さになる */
 const EMERGE_THIN = 0.55;
+/**
+ * 引っ込みきる間際の消し方：長さ（設定の長さに対する比）がこれより短くなったら、
+ *   ・輪郭線を細くしていく（線は画面上で一定の太さなので、ほんの少ししか出ていないときに線だけが残って見える）
+ *   ・根元ごと体の中へ沈めていく（長さが 0 に近づくと、体に埋めた根元がつぶれて表面に貼り付いて見える）
+ * 沈める深さは根元の半径の SINK_DEPTH 倍まで
+ */
+const OUTLINE_FADE = 0.5;
+const SINK_DEPTH = 1.5;
 /** 伸びている間に先を左右へくねらせる振れ幅（ラジアン）と回数 */
 const WIGGLE = 0.12;
 const WIGGLE_TURNS = 1.5;
@@ -80,6 +88,7 @@ export class Peni {
   private presetId = '';
   private readonly mesh: THREE.Group;
   private readonly material: THREE.ShaderMaterial;
+  private readonly outline: THREE.ShaderMaterial;
   private readonly pos = new THREE.Vector3();
   private readonly nrm = new THREE.Vector3();
   private readonly dir = new THREE.Vector3();
@@ -99,7 +108,8 @@ export class Peni {
       [0.001, -0.8], [1, -0.8], [1, 0], [0.55, 0.5], [0.16, 0.92], [0.07, 0.98], [0.001, 1],
     ], 24);
     this.material = createAccessoryMaterial(y.bodyMaterial, y.colors, { rim: 0.25 });
-    this.mesh = withOutline(geometry, this.material, createAccessoryOutlineMaterial(y.outlineMaterial));
+    this.outline = createAccessoryOutlineMaterial(y.outlineMaterial);
+    this.mesh = withOutline(geometry, this.material, this.outline);
     this.object.add(this.mesh);
     this.object.visible = false;
     this.saved = { ...loadJSON<Record<string, PeniParams>>(STORAGE_KEY) };
@@ -191,7 +201,9 @@ export class Peni {
     this.dir.y = Math.max(0, this.dir.y);
     if (this.dir.lengthSq() < 1e-6) this.dir.set(0, 0, 1);
     this.dir.normalize().lerp(Peni.UP, p.rise).normalize();
-    this.mesh.position.copy(this.pos);
+    const length = Peni.lengthAt(t);
+    const fade = smoother(length / OUTLINE_FADE);
+    this.mesh.position.copy(this.pos).addScaledVector(this.dir, -(1 - fade) * SINK_DEPTH * p.radius * R);
     this.mesh.quaternion.setFromUnitVectors(Peni.UP, this.dir);
     // 伸びている間は先を左右へくねらせる（向きに垂直で、なるべく縦の軸のまわりに回す）
     const sway = WIGGLE * Math.sin(Math.PI * 2 * WIGGLE_TURNS * t) * (1 - smoother(t));
@@ -201,9 +213,9 @@ export class Peni {
       if (this.axis.lengthSq() > 1e-6) this.mesh.quaternion.premultiply(this.wiggle.setFromAxisAngle(this.axis.normalize(), sway));
     }
     // 先の細い所から押し出されるように：短いうちは細く、伸びながら設定の太さに
-    const length = Peni.lengthAt(t);
     const thick = EMERGE_THIN + (1 - EMERGE_THIN) * smoother(t / EMERGE_SLIDE);
     this.mesh.scale.set(p.radius * R * thick, p.length * R * length, p.radius * R * thick);
+    this.outline.uniforms.uWidthScale.value = fade;
     // 体の色を変えたら合わせる
     const u = this.material.uniforms;
     (u.uLit.value as THREE.Color).set(y.colors.lit);
