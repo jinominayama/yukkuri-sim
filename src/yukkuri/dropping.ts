@@ -95,6 +95,9 @@ interface Ring {
   h: number;
 }
 
+/** 真上 */
+const Y_UP = new THREE.Vector3(0, 1, 0);
+
 export class Dropping {
   /** 出したもの（体と一緒に震えないよう、シーンに直接置く） */
   readonly object = new THREE.Group();
@@ -307,6 +310,8 @@ export class Dropping {
     const drop = p.detached < 0 ? 0 : THREE.MathUtils.smoothstep(p.detached, 0, SETTLE_TIME);
     // 切り離したら、体の中にあった根元（exitS より手前）を消す
     const from = p.detached < 0 ? 0 : p.exitS;
+    // 地面に寝そべる向き（体から離れる水平な向き）
+    const out = new THREE.Vector3().crossVectors(p.side, Y_UP);
     let k = 0;
     for (let s = from; ; s += step) {
       const last = s >= p.shown;
@@ -314,7 +319,11 @@ export class Dropping {
       while (k < p.len.length - 2 && p.len[k + 1] < d) k++;
       const f = THREE.MathUtils.clamp((d - p.len[k]) / Math.max(1e-6, p.len[k + 1] - p.len[k]), 0, 1);
       const c = p.pts[k].clone().lerp(p.pts[k + 1], f);
-      const t = p.pts[k + 1].clone().sub(p.pts[k]).normalize();
+      let t = p.pts[k + 1].clone().sub(p.pts[k]).normalize();
+      // 宙にあった所を地面に下ろすときは、断面の向きも寝かせる（垂れていた向きのままだと、
+      // 断面の縦横が両方水平になり、地面で平たい板のように見える）
+      // 寝かせる向きは地面に寝そべる所と同じ（体から離れる向き。逆向きに寝かせると断面が裏返る）
+      if (drop > 0 && d < p.ground) t = t.lerp(out, drop).normalize();
       const side = p.side;
       const up = new THREE.Vector3().crossVectors(t, side).normalize();
       const th = this.thickness(d, p.shown, total);
@@ -322,7 +331,7 @@ export class Dropping {
       // 地面に寝そべる所は、底が地面に着く高さまで下げる（細い所も浮かない）
       if (c.y <= p.h * 1.01) c.y = Math.min(c.y, hh);
       else c.y += (hh - c.y) * drop;
-      rings.push({ c, t: drop > 0 && d < p.ground ? t.clone().setY(t.y * (1 - drop)).normalize() : t, side, up, w: W * th, h: hh });
+      rings.push({ c, t, side, up, w: W * th, h: hh });
       if (last) break;
     }
     // 根元の丸いふた（体の中に隠れている間は見えない。体が離れると見える）：最初の断面から後ろへ半球
