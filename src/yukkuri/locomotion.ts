@@ -398,6 +398,11 @@ export class Locomotion {
     return this.isLying || this.state === 'getUp';
   }
 
+  /** 横に転がって仰向けになっている（倒れ込み中を含む）か。前後に長い体型の仰向け */
+  get rolledBack(): boolean {
+    return this.rolledOnBack && this.isLying;
+  }
+
   /** 横になっている（倒れ込み中を含む）か */
   get isLying(): boolean {
     return this.state === 'lieDown' || this.state === 'lying';

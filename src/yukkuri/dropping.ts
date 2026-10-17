@@ -30,9 +30,14 @@ export interface ExitParams {
   frontHeight: number;
   /** 寝転んで仰向けのときの出口：今の高さが、寝転んだ体の高さのこの比に一番近い所 */
   supineHeight: number;
+  /**
+   * 横に転がって仰向けになったとき（前後に長い体型）の出口：背中側の、床から（静止形状の）体の高さのこの比の所。
+   * 横に転がると体の上下が入れ替わるので、いつもの出口のあたりが上の方に来る
+   */
+  rolledHeight: number;
 }
 
-export const DEFAULT_EXIT: ExitParams = { height: 0.26, side: 0, frontHeight: 0.12, supineHeight: 0.6 };
+export const DEFAULT_EXIT: ExitParams = { height: 0.26, side: 0, frontHeight: 0.12, supineHeight: 0.6, rolledHeight: 0.26 };
 
 /** 保存先。体型 ID → その体型の調整値（初期値のままの体型は持たない） */
 const STORAGE_KEY = 'droppingExit';
@@ -189,6 +194,8 @@ export class Dropping {
     const e = this.exit;
     // 向き az は顔の正面が 0・背中が π で、体の右へ回ると背中側は増え、正面側は減る
     if (front) return y.outfit.surfacePoint(-e.side, e.frontHeight, pos, nrm);
+    // 横に転がって仰向け（前後に長い体型）：体の上下が入れ替わり、背中側の出口が上の方に来るので、そのまま背中側から出す
+    if (y.locomotion.rolledBack) return y.outfit.surfacePoint(Math.PI + e.side, e.rolledHeight, pos, nrm);
     if (!y.outfit.surfacePoint(Math.PI + e.side, e.height, pos, nrm)) return false;
     if (y.locomotion.lyingPose === 'supine') {
       // 体の高さは寝転んだ今の高さ（体の一番高い所）

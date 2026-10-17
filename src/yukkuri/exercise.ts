@@ -10,7 +10,8 @@ import type { Yukkuri } from './Yukkuri';
  *   3. ぽんぽんぽかぽか ゆわわ～い … 少し後ろへ反って、左右にひねる
  *   4. うんうんさんも おでかけするよっ … 「でりゅっ！」でうんうん（Dropping）を出す。出し方は始めるときにどちらかを選ぶ。
  *      どちらもその姿勢のまま出し、出し終わったら（すっきりーの前に）起き上がる：
- *        ・仰向け：後ろへ反ってお尻を見せ、体の前の下から前へ出す
+ *        ・仰向け：後ろへ反ってお尻を見せ、体の前の下から前へ出す。
+ *          前後に長い体型（いもむし型）は、横に転がって仰向けに寝転び、背中側から出す（出し終わったら起き上がる）
  *        ・腹ばい：前へ大きく倒れてお尻を突き上げ、いつもの背中側から出す
  * 体は Locomotion.gesture で動かす（立って止まっている間だけ効く）。寝転がっていれば起き上がってから始める
  */
@@ -48,11 +49,23 @@ const PRONE_TIME = 1.2;
 const PRONE_TILT_LONG = 0.55;
 const PRONE_ARCH_LONG = 1.5;
 /**
- * 4. 前後に長い体型の後ろへの反り：体ごと傾けても長い体はほとんど傾かない（指令 31° に対して 14°）ので、
- * 背骨を縦に逆向きに曲げて頭の側を起こし、お尻の側を地面に付けたまま反り返る（顔が上を向く）
+ * 前後に長い体型の「お腹見せ」の身ぶり（Locomotion.gesture の前への傾き・背骨の縦の曲げ。rad）：
+ * 背骨を縦に逆向きに曲げて頭の側を起こし、お尻の側を地面に付けたまま反り返る（顔がほぼ真上を向き、お腹を見せる）。
+ * 体ごと傾けても長い体はほとんど傾かない（後ろへ 31° の指令に対して 14°）ので、曲げで作る。
+ * もとは 4. の仰向けの出し方に使っていた（今は横に転がって仰向けになる）。ほかの動きに使うかもしれないので残している
  */
-const LEAN_BACK_LONG = 0.55;
-const LEAN_ARCH_LONG = -1.5;
+export const BELLY_SHOW_LONG = { pitch: -0.55, arch: -1.5 };
+/**
+ * 4. 前後に長い体型が横に転がって仰向けになりきるのを待つ：体の上向き（の上下の成分）がこれより下を向き、
+ * 体の回る速さ（rad/s）がこれより遅くなったら出す。待つ上限（秒）。
+ * 移動の処理が寝転び終えたと判断した時点では、体はまだ半分ほどしか転がっていない（体が指令に遅れて付いてくる）。
+ * いもむし型で、寝転び始めから約 4.5 秒で上向きが -0.95 に届き、回る速さは 0.25 を切る
+ */
+const ROLL_BACK_UP = -0.95;
+const ROLL_BACK_SPIN = 0.25;
+const ROLL_BACK_MAX = 7;
+/** 同じく、4. の歌詞を出しておく時間（秒） */
+const ROLL_BACK_LYRIC = 5.5;
 /** 4. の出し方を腹ばい・お尻突き上げにする割合 */
 const PRONE_CHANCE = 0.5;
 
@@ -88,6 +101,10 @@ export class Exercise {
   private calls = 0;
   /** 4. を腹ばい・お尻突き上げで出すか（始めるときに決める） */
   private prone = false;
+  /** 4. を横に転がって仰向けに寝転んで出すか（前後に長い体型の仰向け。4. の始めに決める） */
+  private rollBack = false;
+  /** 前の update での体の姿勢（回る速さを測る） */
+  private readonly lastRotation = new THREE.Quaternion();
 
   constructor(private readonly y: Yukkuri) {}
 
@@ -108,6 +125,7 @@ export class Exercise {
     this.phase = 'wait';
     this.t = 0;
     this.prone = prone ?? Math.random() < PRONE_CHANCE;
+    this.rollBack = false;
     if (loco.isLying) y.getUp();
     return true;
   }
@@ -136,8 +154,20 @@ export class Exercise {
       return;
     }
     if (this.phase === 'pose') {
+      if (this.rollBack) {
+        // 横に転がった仰向けのまま、出し終わったら（すっきりー）起き上がる（塊に重なりそうなら寝返りでずれてから）
+        if (!y.dropping.pushing) {
+          this.finish();
+          y.getUp();
+        }
+        return;
+      }
       // 4. の姿勢のまま、出し終わる（すっきりー）か立ち姿でなくなるまで待つ
       if (!y.dropping.pushing || !loco.idle) this.finish();
+      return;
+    }
+    if (this.phase === 'lean' && this.rollBack) {
+      this.rollOnBack(dt);
       return;
     }
     // 立ち姿でなくなったら（落とされた・転んだなど）やめる
@@ -187,13 +217,7 @@ export class Exercise {
             pitch = PRONE_TILT * k;
           }
         } else {
-          const k = smooth(t / 0.8);
-          if (loco.isLongBody()) {
-            pitch = -LEAN_BACK_LONG * k;
-            arch = LEAN_ARCH_LONG * k;
-          } else {
-            pitch = -LEAN_BACK * k;
-          }
+          pitch = -LEAN_BACK * smooth(t / 0.8);
         }
         if (this.calls === 0 && t > 0.9) {
           this.calls++;
@@ -225,9 +249,47 @@ export class Exercise {
     this.phase = phase;
     this.t = 0;
     this.calls = 0;
+    if (phase === 'lean') {
+      // 前後に長い体型の仰向けは、横に転がって仰向けに寝転ぶ（身ぶりはやめて、寝転ぶ動きに任せる）
+      this.rollBack = !this.prone && y.locomotion.isLongBody();
+      if (this.rollBack) {
+        y.locomotion.gesture = null;
+        y.locomotion.lieDown('supine');
+        this.lastRotation.copy(y.body.rotation);
+      }
+    }
     const face = { sway: FACE_SWAY, stretch: FACE_STRETCH, twist: FACE_TWIST, lean: FACE_LEAN }[phase];
     showFace(y, face, AT_LEAST);
-    this.lyric(LYRICS[phase], { sway: SWAY_TIME, stretch: STRETCH_TIME, twist: TWIST_TIME, lean: LEAN_TIME }[phase]);
+    // 横に転がって仰向けになる 4. は、仰向けになりきるまで（約 4.5 秒）長くかかるので、歌詞も長めに出す
+    const life = phase === 'lean' && this.rollBack ? ROLL_BACK_LYRIC : { sway: SWAY_TIME, stretch: STRETCH_TIME, twist: TWIST_TIME, lean: LEAN_TIME }[phase];
+    this.lyric(LYRICS[phase], life);
+  }
+
+  /**
+   * 4. 横に転がって仰向けになる（前後に長い体型）：体が十分に裏返ったら「でりゅっ！」で背中側から出す。
+   * 裏返りきらなくても ROLL_BACK_MAX 秒で出す
+   */
+  private rollOnBack(dt: number): void {
+    const y = this.y;
+    const loco = y.locomotion;
+    if (!loco.isLying) {
+      // 落とされた・起こされたなど
+      this.cancel();
+      return;
+    }
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(y.body.rotation);
+    const spin = y.body.rotation.angleTo(this.lastRotation) / Math.max(dt, 1e-6);
+    this.lastRotation.copy(y.body.rotation);
+    if ((loco.resting && up.y < ROLL_BACK_UP && spin < ROLL_BACK_SPIN) || this.t > ROLL_BACK_MAX) {
+      this.shout('でりゅっ！', true);
+      this.phase = 'pose';
+      y.face.override = null;
+      if (!y.dropping.start()) {
+        this.finish();
+        loco.release();
+        y.getUp();
+      }
+    }
   }
 
   /** 段の始め offset 秒から every 秒ごとに、顔の左右に交互に掛け声を出す */

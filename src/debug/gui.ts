@@ -164,6 +164,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(exit.add(y.dropping.exit, 'side', -1, 1, 0.01).name('左右（+で体の右）').onChange(saveExit));
   noLock(exit.add(y.dropping.exit, 'frontHeight', 0.03, 0.4, 0.01).name('高さ（前から出すとき）').onChange(saveExit));
   noLock(exit.add(y.dropping.exit, 'supineHeight', 0.2, 0.9, 0.01).name('高さ（寝転んで仰向け）').onChange(saveExit));
+  noLock(exit.add(y.dropping.exit, 'rolledHeight', 0.05, 0.6, 0.01).name('高さ（横に転がった仰向け）').onChange(saveExit));
   exit.close();
 
   // ぺにぺに：顔の正面の下に生える円錐
