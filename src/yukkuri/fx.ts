@@ -93,6 +93,16 @@ export function showFace(y: Yukkuri, face: Partial<PartSelection>, atLeast: Part
   y.face.override = out;
 }
 
+/**
+ * 体の前の向き（水平）。体の向き（Y 軸まわり）から求める。
+ * 体を大きく傾けているとき（腹ばいでお尻を突き上げるなど）は顔がほぼ真下・真上を向き、
+ * 顔の向きの水平成分はわずかな揺れで前にも後ろにもなるので、跳ねる向きなどにはこちらを使う
+ */
+export function bodyFacing(y: Yukkuri): THREE.Vector3 {
+  const yaw = y.body.yaw;
+  return new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+}
+
 /** 顔の正面の向き（水平）と、顔座標 (fx, fy) の位置 */
 export function faceFrame(y: Yukkuri, fx = 0, fy = 0): { pos: THREE.Vector3; facing: THREE.Vector3 } {
   const pos = new THREE.Vector3(), n = new THREE.Vector3();

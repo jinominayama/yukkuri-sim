@@ -3,7 +3,7 @@ import { createAccessoryMaterial } from '../render/accessoryMaterial';
 import { createAccessoryOutlineMaterial } from '../render/outlineMaterial';
 import type { PartSelection } from '../face/parts';
 import { loadJSON, saveJSON } from '../platform/storage';
-import { faceFrame, showFace } from './fx';
+import { bodyFacing, showFace } from './fx';
 import type { Yukkuri } from './Yukkuri';
 
 /**
@@ -326,7 +326,8 @@ export class Dropping {
     this.t = 0;
     y.tremble = 0;
     showFace(y, FACE_RELIEF, AT_LEAST_RELIEF);
-    const { facing } = faceFrame(y);
+    // 前の向きは体の向きから（腹ばいでお尻を突き上げていると顔は真下を向き、顔からは前後が決まらない）
+    const facing = bodyFacing(y);
     // 立っていれば一歩前へ跳ねる（寝転がっているときは跳ねない）。
     // 前に出したときは、前へ跳ねると塊に乗ってしまうので、後ろへ小さく跳ねて塊から離れる
     if (!y.locomotion.isLying) {

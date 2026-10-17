@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { PartSelection } from '../face/parts';
-import { faceFrame, showFace } from './fx';
+import { bodyFacing, faceFrame, showFace } from './fx';
 import type { Yukkuri } from './Yukkuri';
 
 /**
@@ -243,7 +243,9 @@ export class Exercise {
   private shout(text: string, big: boolean, side = 0): void {
     const y = this.y;
     const R = y.shape.radius;
-    const { pos: mouth, facing } = faceFrame(y, 0, -0.06);
+    const { pos: mouth } = faceFrame(y, 0, -0.06);
+    // 前の向きは体の向きから（4. で大きく傾けていると顔は真下・真上を向き、顔からは前後が決まらない）
+    const facing = bodyFacing(y);
     const sideDir = new THREE.Vector3(-facing.z, 0, facing.x);
     const pos = new THREE.Vector3();
     if (big) {
@@ -260,7 +262,7 @@ export class Exercise {
   private lyric(text: string, life: number): void {
     const y = this.y;
     const R = y.shape.radius;
-    const { facing } = faceFrame(y);
+    const facing = bodyFacing(y);
     // 段の始めの頭の高さから測るので、反り返って頭が高くなっても頭の上の掛け声と重ならない高さにする
     const pos = new THREE.Vector3(y.center.x, y.center.y + y.height * 0.5 + R * 1.15, y.center.z).addScaledVector(facing, R * 0.2);
     y.texts.say(text, pos, R * 0.22, life, new THREE.Vector3(0, R * 0.02, 0));
