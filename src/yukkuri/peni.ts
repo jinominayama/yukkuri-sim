@@ -34,6 +34,11 @@ const MOUTH_BOTTOM_FY = -0.25;
 /** 地面からこの高さ（胴の半径に対する比）より下には生やさない（地面に接して下を向いている所） */
 const MIN_HEIGHT = 0.08;
 /**
+ * 生やす高さの範囲の、根元の半径に対する余白：位置 0 は口の下端から根元の半径のこれ倍だけ下（根元が口にかからない）、
+ * 一番下は地面から根元の半径のこれ倍だけ上（立って落ち着いているとき、根元の下側が地面に着かない）
+ */
+const RADIUS_MARGIN = 1.2;
+/**
  * 生やす所に選んでよい、法線の下向きの限度（上下の成分）。口の低い体型（いもむし型など）では口のすぐ下から
  * 体が下へ回り込むので、かなり下を向いた所まで選べるようにする
  */
@@ -46,11 +51,18 @@ const AZ_WEIGHT = 1;
 /** 生やす所を探す、正面からの左右の角度の範囲（ラジアン） */
 const AZ_RANGE = 0.25;
 /**
- * 体の下に敷かれているとみなして隠す：根元が地面からこれ（胴の半径に対する比）より低いとき、
- * または生えている所の法線がこれより下を向いているとき（腹ばいで顔が地面を向いているとき）
+ * 体を倒している間（倒れ込み・横になっている・起き上がりの途中）に、生えている所の法線がこれより下を向いたら
+ * （腹ばいで顔が地面を向いているとき）、体の下に敷かれているとみなして隠す。
+ * 跳ねる・這うときのつぶれでは隠さない（低い所に生やしていると、つぶれるたびに消えたり出たりする）
+ */
+const HIDE_NORMAL_Y = -0.92;
+/**
+ * 円錐の一番低い所を、地面からこれ（胴の半径に対する比）より上に保つ。体がつぶれたときなど、
+ * 下へはみ出しそうなら円錐ごと持ち上げる（体の中へずれるので、持ち上げた分の根元は体に隠れる）
  */
 const GROUND_CLEAR = 0.02;
-const HIDE_NORMAL_Y = -0.92;
+/** 向きは体の表面からこの角度（ラジアン）以上起こす（上向きを大きくしても体の丸みに潜らないように） */
+const MIN_SURFACE_ANGLE = Math.PI / 6;
 
 /**
  * 出し入れの動き：出し始めから出しきるまでの時間（秒）と、引っ込めるときの時間（秒）。
@@ -208,15 +220,19 @@ export class Peni {
     if (t <= 0) return;
     const y = this.y;
     const R = y.shape.radius;
-    const key = `${p.at}|${y.outfit.builds}`;
+    const key = `${p.at}|${p.radius}|${y.outfit.builds}`;
     if (this.vertex < 0 || (key !== this.chosenFor && still)) {
-      // 口の下端の今の高さと地面の間を at で割り振った高さにある、正面の表面の点
+      // 口の下端（から根元の太さの分だけ下）の今の高さと、地面（から根元の太さの分だけ上）の間を
+      // at で割り振った高さにある、正面の表面の点
       const mouthRest = y.outfit.restHeightAt(0, MOUTH_BOTTOM_FY);
       if (mouthRest < 0 || !y.outfit.facePoint(0, MOUTH_BOTTOM_FY, this.pos, this.nrm)) {
         this.object.visible = false;
         return;
       }
-      const target = Math.max(MIN_HEIGHT * R, this.pos.y * (1 - p.at));
+      const margin = RADIUS_MARGIN * p.radius * R;
+      const low = Math.max(MIN_HEIGHT * R, margin);
+      const high = Math.max(low, this.pos.y - margin);
+      const target = high + (low - high) * p.at;
       this.vertex = y.outfit.surfaceIndexAt(0, AZ_RANGE, mouthRest, target, MIN_NORMAL_Y, AZ_WEIGHT);
       // 動いている間に選んだのは仮の所。落ち着いたら選び直す
       this.chosenFor = still ? key : '';
@@ -226,7 +242,7 @@ export class Peni {
       }
     }
     y.outfit.vertexPoint(this.vertex, this.pos, this.nrm);
-    if (this.pos.y < GROUND_CLEAR * R || this.nrm.y < HIDE_NORMAL_Y) {
+    if (y.locomotion.tilted && this.nrm.y < HIDE_NORMAL_Y) {
       this.object.visible = false;
       return;
     }
@@ -235,6 +251,14 @@ export class Peni {
     this.dir.y = Math.max(0, this.dir.y);
     if (this.dir.lengthSq() < 1e-6) this.dir.set(0, 0, 1);
     this.dir.normalize().lerp(Peni.UP, p.rise).normalize();
+    // 体の表面から MIN_SURFACE_ANGLE 以上起こす（表面に沿う成分を縮める）
+    const minUp = Math.sin(MIN_SURFACE_ANGLE);
+    const up = this.dir.dot(this.nrm);
+    if (up < minUp) {
+      this.axis.copy(this.dir).addScaledVector(this.nrm, -up);
+      if (this.axis.lengthSq() > 1e-8) this.dir.copy(this.nrm).multiplyScalar(minUp).addScaledVector(this.axis.normalize(), Math.cos(MIN_SURFACE_ANGLE));
+      else this.dir.copy(this.nrm);
+    }
     const length = Peni.lengthAt(t);
     const fade = smoother(length / OUTLINE_FADE);
     this.mesh.position.copy(this.pos).addScaledVector(this.dir, -(1 - fade) * SINK_DEPTH * p.radius * R);
@@ -248,7 +272,13 @@ export class Peni {
     }
     // 先の細い所から押し出されるように：短いうちは細く、伸びながら設定の太さに
     const thick = EMERGE_THIN + (1 - EMERGE_THIN) * smoother(t / EMERGE_SLIDE);
-    this.reshape(p.radius * R * thick, p.length * R * length, p.round);
+    const radius = p.radius * R * thick;
+    this.reshape(radius, p.length * R * length, p.round);
+    // 円錐の一番低い所（根元の円の一番低い所か、下を向いていれば先）が地面より下なら持ち上げる
+    const axisY = this.axis.set(0, 1, 0).applyQuaternion(this.mesh.quaternion).y;
+    const lowest = this.mesh.position.y + Math.min(
+      -radius * Math.sqrt(Math.max(0, 1 - axisY * axisY)), axisY * this.builtL);
+    if (lowest < GROUND_CLEAR * R) this.mesh.position.y += GROUND_CLEAR * R - lowest;
     this.outline.uniforms.uWidthScale.value = fade;
     // 体の色を変えたら合わせる
     const u = this.material.uniforms;

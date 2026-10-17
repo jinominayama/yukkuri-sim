@@ -312,6 +312,11 @@ export class Locomotion {
     return this.isLying ? (this.lieSign > 0 ? 'prone' : 'supine') : null;
   }
 
+  /** 体を倒している（倒れ込み・横になっている・起き上がりの途中）か。跳ねる・這うときのつぶれとは別 */
+  get tilted(): boolean {
+    return this.isLying || this.state === 'getUp';
+  }
+
   /** 横になっている（倒れ込み中を含む）か */
   get isLying(): boolean {
     return this.state === 'lieDown' || this.state === 'lying';
