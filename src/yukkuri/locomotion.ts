@@ -136,6 +136,11 @@ const LIE_SPEED = 1.3;
  */
 const LIE_POSTURE = 0.5;
 const ROLL_SPEED = 1.8;
+/**
+ * 前後の長さが、高さ・横幅の大きい方のこれ倍より長い体型（いもむし型など）は、仰向けになるとき
+ * 後ろへ倒れず、長い軸のまわりに横へ転がって背中を地面につける（長い体を縦に起こすのは重くてできない）
+ */
+const LONG_BODY = 1.4;
 const RISE_SPEED = 1.2;
 /** 起き上がり完了とみなす傾き (rad) */
 const RECOVERED = (10 * Math.PI) / 180;
@@ -201,6 +206,12 @@ export class Locomotion {
   private readonly rollAxis = new Vector3();
   private rollAngle = 0;
   private rollSign = 1;
+  /** 今回の転がりで回る角度 (rad)。寝返りは 180° */
+  private rollTotal = Math.PI;
+  /** 横に転がって仰向けになっている（起き上がるとき・腹ばいへ寝返るときも横に転がって戻す） */
+  private rolledOnBack = false;
+  /** 横に転がって起きたあと、続けて腹ばいへ倒れる */
+  private proneAfterRoll = false;
   private readonly _rq = new Quaternion();
   /** 姿勢の指令が目標に届いてからの時間 */
   private reachedFor = 0;
@@ -260,7 +271,12 @@ export class Locomotion {
     if (lying && sign === this.lieSign) return; // すでにその体勢
     this.lieSign = sign;
     this.reachedFor = 0;
-    if (lying) {
+    if (lying && this.rolledOnBack) {
+      // 横に転がって仰向けになっていれば、横に転がって起きてから前へ倒れる（腹ばいへ）
+      this.startRoll(this.forwardAxis(this.poseCmd), Math.random() < 0.5 ? 1 : -1);
+      this.rolledOnBack = false;
+      this.proneAfterRoll = sign > 0;
+    } else if (lying) {
       // 寝返り：体を横たえた向き（頭の向きを水平にしたもの）を軸に、丸太のように 180° 転がる。
       // お腹は前面の下部にあるので、この転がりで腹ばい（お腹が真下）と仰向け（お腹が真上）が入れ替わる
       this.rolling = true;
@@ -270,26 +286,78 @@ export class Locomotion {
       if (this.rollAxis.lengthSq() < 1e-6) this.rollAxis.set(0, 0, 1).applyQuaternion(this.poseCmd).setY(0);
       this.rollAxis.normalize();
       this.rollAngle = 0;
+      this.rollTotal = Math.PI;
       this.rollSign = Math.random() < 0.5 ? 1 : -1;
       this.phaseTarget.setFromAxisAngle(this.rollAxis, Math.PI).multiply(this.rollStart);
+    } else if (pose === 'supine' && this.isLongBody()) {
+      // 前後に長い体：長い軸のまわりに横へ転がって、背中を地面につける
+      this.poseCmd.copy(b.rotation);
+      this.startRoll(this.forwardAxis(b.rotation), Math.random() < 0.5 ? 1 : -1);
+      this.rolledOnBack = true;
     } else {
       // 立ち姿から：今の向きのまま、前（腹ばい）・後ろ（仰向け）へ倒れる
       this.rolling = false;
+      this.rolledOnBack = false;
       this.poseCmd.copy(b.rotation);
       this.phaseTarget.setFromAxisAngle(Y_AXIS, b.yaw).multiply(lyingLocal(pose));
     }
     this.go('lieDown');
   }
 
-  /** 横になっていれば、そのまま体を起こして起き上がる */
+  /** 横になっていれば、そのまま体を起こして起き上がる（横に転がって仰向けになっていれば、横に転がって戻る） */
   getUp(): void {
     if (this.state !== 'lieDown' && this.state !== 'lying') return;
     const b = this.body;
     this.rolling = false;
+    this.proneAfterRoll = false;
     this.reachedFor = 0;
     this.poseCmd.copy(b.rotation);
-    nearestPose(new Quaternion(), b.rotation, this.phaseTarget);
+    if (this.rolledOnBack) {
+      // 長い軸のまわりに横へ転がって戻る（向きの近い立ち姿を探すと、どれもほぼ 180° 離れていて縦に起き上がることがある）。
+      // 今どれだけ転がっているか（体の上の向きの、長い軸のまわりの角度）を測り、近い方へその分だけ戻して真っすぐ立つ
+      const axis = this.forwardAxis(b.rotation);
+      const yaw = Math.atan2(axis.x, axis.z);
+      const right = new Vector3(1, 0, 0).applyAxisAngle(Y_AXIS, yaw);
+      const up = new Vector3(0, 1, 0).applyQuaternion(b.rotation);
+      const rolled = Math.atan2(-up.dot(right), up.y);
+      this.poseCmd.setFromAxisAngle(axis, rolled).multiply(new Quaternion().setFromAxisAngle(Y_AXIS, yaw));
+      this.startRoll(axis, rolled > 0 ? -1 : 1, Math.abs(rolled));
+      this.rolledOnBack = false;
+    } else {
+      nearestPose(new Quaternion(), b.rotation, this.phaseTarget);
+    }
     this.go('getUp');
+  }
+
+  /** 前後の長さが、高さ・横幅の大きい方の LONG_BODY 倍より長い体型か（静止形状で測る） */
+  private isLongBody(): boolean {
+    const r = this.body.rest;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let i = 0; i < r.length; i += 3) {
+      x0 = Math.min(x0, r[i]); x1 = Math.max(x1, r[i]);
+      y0 = Math.min(y0, r[i + 1]); y1 = Math.max(y1, r[i + 1]);
+      z0 = Math.min(z0, r[i + 2]); z1 = Math.max(z1, r[i + 2]);
+    }
+    return z1 - z0 > LONG_BODY * Math.max(x1 - x0, y1 - y0);
+  }
+
+  /** 姿勢 q の体の前（長い軸）の向きを水平にしたもの */
+  private forwardAxis(q: Quaternion): Vector3 {
+    const f = new Vector3(0, 0, 1).applyQuaternion(q).setY(0);
+    if (f.lengthSq() < 1e-6) f.set(0, 1, 0).applyQuaternion(q).setY(0);
+    if (f.lengthSq() < 1e-6) f.set(0, 0, 1);
+    return f.normalize();
+  }
+
+  /** 今の姿勢の指令から、水平な軸 axis のまわりに sign の向きへ total (rad) 転がり始める */
+  private startRoll(axis: Vector3, sign: number, total = Math.PI): void {
+    this.rolling = true;
+    this.rollStart.copy(this.poseCmd);
+    this.rollAxis.copy(axis);
+    this.rollAngle = 0;
+    this.rollSign = sign;
+    this.rollTotal = total;
+    this.phaseTarget.setFromAxisAngle(this.rollAxis, sign * total).multiply(this.rollStart);
   }
 
   /** 立って待機している（移動・体勢の切り替えをしていない）か */
@@ -437,7 +505,14 @@ export class Locomotion {
         act.uprightMin = LIE_POSTURE;
         squashGoal = 0.95;
         const done = this.rolling ? this.followRoll(dt) : this.followPose(dt, LIE_SPEED);
-        if (done) {
+        if (done && this.proneAfterRoll) {
+          // 横に転がって起きた：続けて前へ倒れて腹ばいになる
+          this.proneAfterRoll = false;
+          this.rolling = false;
+          this.reachedFor = 0;
+          const f = this.forwardAxis(this.poseCmd);
+          this.phaseTarget.setFromAxisAngle(Y_AXIS, Math.atan2(f.x, f.z)).multiply(lyingLocal('prone'));
+        } else if (done) {
           this.rolling = false;
           this.go('lying');
         }
@@ -455,7 +530,9 @@ export class Locomotion {
         // 少し縮んで踏ん張り、そのまま体を起こす
         act.uprightMin = LIE_POSTURE;
         squashGoal = 0.92;
-        if (this.followPose(dt, RISE_SPEED) && (tilt < RECOVERED || this.reachedFor > 2)) {
+        const risen = this.rolling ? this.followRoll(dt) : this.followPose(dt, RISE_SPEED);
+        if (risen && (tilt < RECOVERED || this.reachedFor > 2)) {
+          this.rolling = false;
           // 起き上がりきれなくても、倒れていれば「体勢を立て直す」が引き継ぐ
           this.go('idle');
           break;
@@ -647,10 +724,10 @@ export class Locomotion {
 
   /** 寝返り：水平な軸まわりに一定の角速度で 180° 転がす。転がり終えて体も追いついたら true */
   private followRoll(dt: number): boolean {
-    this.rollAngle = Math.min(Math.PI, this.rollAngle + ROLL_SPEED * dt);
+    this.rollAngle = Math.min(this.rollTotal, this.rollAngle + ROLL_SPEED * dt);
     this._rq.setFromAxisAngle(this.rollAxis, this.rollSign * this.rollAngle);
     this.poseCmd.copy(this._rq).multiply(this.rollStart);
-    if (this.rollAngle < Math.PI) return false;
+    if (this.rollAngle < this.rollTotal) return false;
     this.reachedFor += dt;
     const bodyClose = this.body.rotation.angleTo(this.poseCmd) < POSE_TOLERANCE;
     return bodyClose || this.reachedFor > POSE_WAIT;
