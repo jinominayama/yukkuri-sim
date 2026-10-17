@@ -263,17 +263,31 @@ export class WitchHat implements Accessory {
    * つばと地面の間の隙間から帽子の中（頭）が見えないように。
    * 地面から DRAPE_HEIGHT より高い所は垂らさない（上側のつばは元の形）
    */
-  private drapeBrim(a: Float32Array): void {
+  private drapeBrim(a: Float32Array, amount = 1): void {
     // 上面（円錐の側。寝転がると地面を向く）は地面まで、下面はつばの厚みだけ上で止める
     // （同じ高さに重なるとちらつく）
-    this.drape(a, (j) => (j <= BRIM_TOP_LAST || j === BRIM_PROFILE - 1 ? DRAPE_CLEAR : DRAPE_CLEAR + DRAPE_THICK), BRIM_PROFILE);
+    this.drape(a, (j) => (j <= BRIM_TOP_LAST || j === BRIM_PROFILE - 1 ? DRAPE_CLEAR : DRAPE_CLEAR + DRAPE_THICK), BRIM_PROFILE, amount);
+  }
+
+  /**
+   * 円錐が地面に当たらないまま、つばの縁だけが床に潜りそうなときに垂らす量（0〜1）。
+   * 顔を床に付けるほど前へ倒すと（もるんもるん）、円錐は上を向いたまま、顔の前のつばの縁が床に潜る。
+   * 縁が床から BRIM_DIP_FROM より下がり始めたら垂らし始め、BRIM_DIP_RANGE 下がるまでに全部垂らす（急に形が変わらないように）
+   */
+  private brimDip(): number {
+    const e = this.object.matrix.elements;
+    const a = this.brimBase;
+    let low = Infinity;
+    for (let v = 0; v < a.length; v += 3) low = Math.min(low, e[1] * a[v] + e[5] * a[v + 1] + e[9] * a[v + 2]);
+    const h = low + e[13] - GROUND_BRIM;
+    return THREE.MathUtils.clamp((BRIM_DIP_FROM - h) / BRIM_DIP_RANGE, 0, 1);
   }
 
   /**
    * つばを垂らすのと同じ動かし方で、点の列 a を地面の側へ寄せる。止める高さは floor(点の番号 % period)（地面からの高さ）。
    * 帯・リボンにも使う（つばだけ垂らすと、垂れたつばが円錐の付け根の帯とリボンを越えて、頭の側へ突き抜けて見える）
    */
-  private drape(a: Float32Array, floorOf: (j: number) => number, period = 1): void {
+  private drape(a: Float32Array, floorOf: (j: number) => number, period = 1, amount = 1): void {
     const e = this.object.matrix.elements;
     // 帽子の座標で動かす向き：ワールドの高さが一番速く下がる向き
     const gx = e[1], gy = e[5], gz = e[9];
@@ -288,7 +302,7 @@ export class WitchHat implements Accessory {
       // 外ほど、低いほどよく垂れる（縁の低い所はちょうど止める高さまで）。
       // 止める高さより下にある所は、そこまで持ち上げる（上面と下面が同じ高さでつぶれないように）
       const w = h <= 0 ? 1 : THREE.MathUtils.smoothstep(r, inner, outer) * (1 - THREE.MathUtils.smoothstep(h, 0, DRAPE_HEIGHT));
-      const k = (h * w) / g2;
+      const k = (h * w * amount) / g2;
       a[v] = x - gx * k;
       a[v + 1] = y - gy * k;
       a[v + 2] = z - gz * k;
@@ -549,7 +563,9 @@ export class WitchHat implements Accessory {
     if (this.object.visible) {
       this.avoidHead(ctx);
       const fold = this.groundFold();
-      if (fold || this.folded || this.crownDirty) {
+      // 円錐は当たっていないが、つばの縁が床に潜りそう（深くお辞儀したとき）
+      const dip = fold ? 0 : this.brimDip();
+      if (fold || dip > 0 || this.folded || this.crownDirty) {
         // 折り曲げた円錐は断面が回って頭にかかることがあるので、体の外へ押し出す
         const grid = fold ? new PointGrid(this.local3, this.localN, this.near.length, BODY_CELL) : null;
         this.crownParts.forEach((part, k) => {
@@ -578,12 +594,14 @@ export class WitchHat implements Accessory {
           const a = p.array as Float32Array;
           a.set(this.brimBase);
           if (fold) this.drapeBrim(a);
+          else if (dip > 0) this.drapeBrim(a, dip);
           grid?.pushOut(a, BODY_CLEAR);
           p.needsUpdate = true;
           this.brimGeometry.computeVertexNormals();
           this.brimGeometry.computeBoundingSphere();
         }
-        this.folded = fold !== null;
+        // 垂らしたつばを元へ戻すため、次も作り直す（垂らす量が 0 になった回で元の形に戻る）
+        this.folded = fold !== null || dip > 0;
         this.crownDirty = false;
       }
     }
@@ -725,6 +743,9 @@ const DRAPE_THICK = 0.012;
 const DRAPE_UNDER = -0.001;
 /** 同じく、地面からこの高さ（ワールド）より低い所だけ垂らす */
 const DRAPE_HEIGHT = 0.6;
+/** 円錐が当たらずにつばの縁だけ床に近づいたとき：縁が床からこの高さ（ワールド）より下がったら垂らし始め、さらにこれだけ下がるまでに全部垂らす */
+const BRIM_DIP_FROM = 0.03;
+const BRIM_DIP_RANGE = 0.08;
 
 /** リボンを帯の上へ持ち上げる量（帽子の単位） */
 const BOW_RAISE = 0.06;
