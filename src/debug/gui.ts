@@ -158,6 +158,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(peni.add(y.peni.params, 'length', 0.05, 0.6, 0.01).name('長さ').onChange(savePeni));
   noLock(peni.add(y.peni.params, 'radius', 0.02, 0.2, 0.005).name('太さ').onChange(savePeni));
   noLock(peni.add(y.peni.params, 'rise', 0, 1, 0.05).name('上向き').onChange(savePeni));
+  noLock(peni.add(y.peni.params, 'round', 0, 1, 0.01).name('先の丸み').onChange(savePeni));
 
   const pose = gui.addFolder('体勢');
   pose.add({ f: () => y.locomotion.lieDown('prone') }, 'f').name('腹ばいになる');

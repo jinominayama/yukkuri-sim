@@ -20,9 +20,11 @@ export interface PeniParams {
   radius: number;
   /** 上向きへの反り（0 で体の表面にまっすぐ、1 で真上） */
   rise: number;
+  /** 先の丸み：先にはめる玉の半径（根元の半径に対する比。0 で尖り、大きいほど丸い） */
+  round: number;
 }
 
-export const DEFAULT_PENI: PeniParams = { show: false, at: 0.45, length: 0.28, radius: 0.075, rise: 0.3 };
+export const DEFAULT_PENI: PeniParams = { show: false, at: 0.45, length: 0.28, radius: 0.075, rise: 0.3, round: 0.45 };
 
 /** 保存先。体型 ID → その体型の設定（初期値のままの体型は持たない） */
 const STORAGE_KEY = 'peni';
@@ -73,6 +75,36 @@ const SINK_DEPTH = 1.5;
 const WIGGLE = 0.12;
 const WIGGLE_TURNS = 1.5;
 
+/** 根元を体に埋める深さ（根元の半径に対する比） */
+const BASE_SINK = 1.2;
+/** 長さ・太さがこの割合より変わったら形を作り直す */
+const REBUILD_EPS = 0.01;
+/** 先の丸みの区切りの数 */
+const TIP_STEPS = 8;
+
+/**
+ * 根元の半径 r・長さ L の円錐の、先を半径 round × r の玉で丸めた断面（下から上へ。lathe に渡す）。
+ * 引き伸ばして使うと丸みが長さの向きに伸びて尖るので、実際の大きさで作る
+ */
+function profile(r: number, L: number, round: number): [number, number][] {
+  const side = Math.hypot(r, L);
+  const sinA = r / side; // 円錐の開きの半分の角の sin
+  // 玉は円錐の両側に接する。円錐に収まらないほど短いときは小さくする
+  const rt = Math.max(1e-4 * r, Math.min(round * r, L * sinA * 0.9));
+  const yc = L - rt / sinA; // 玉の中心
+  // 接する所：先から側面に沿って rt / tan(角) の所
+  const d = rt * (L / r);
+  const px = (r / side) * d, py = L - (L / side) * d;
+  const pts: [number, number][] = [[0.001 * r, -BASE_SINK * r], [r, -BASE_SINK * r], [r, 0], [px, py]];
+  const from = Math.atan2(px, py - yc);
+  for (let i = 1; i < TIP_STEPS; i++) {
+    const a = from * (1 - i / TIP_STEPS);
+    pts.push([rt * Math.sin(a), yc + rt * Math.cos(a)]);
+  }
+  pts.push([0.001 * r, yc + rt]);
+  return pts;
+}
+
 /** 0〜1 をなめらかに（始めと終わりの速さが 0、加速度も 0） */
 function smoother(t: number): number {
   t = THREE.MathUtils.clamp(t, 0, 1);
@@ -87,6 +119,10 @@ export class Peni {
   /** 今の体型（設定をどの体型のものとして読み書きするか） */
   private presetId = '';
   private readonly mesh: THREE.Group;
+  /** 今の形の大きさ（根元の半径・長さ。変わったら作り直す） */
+  private builtR = 0;
+  private builtL = 0;
+  private builtRound = -1;
   private readonly material: THREE.ShaderMaterial;
   private readonly outline: THREE.ShaderMaterial;
   private readonly pos = new THREE.Vector3();
@@ -104,9 +140,7 @@ export class Peni {
   constructor(private readonly y: Yukkuri) {
     // 根元（y = 0）から先端（y = 1）へ細くなる円錐。根元は体に少し埋めて、継ぎ目を見せない。先端は少し丸める
     // 断面は下から上へ並べる（逆だと面が裏返る）
-    const geometry = lathe([
-      [0.001, -0.8], [1, -0.8], [1, 0], [0.55, 0.5], [0.16, 0.92], [0.07, 0.98], [0.001, 1],
-    ], 24);
+    const geometry = lathe(profile(1, 3, DEFAULT_PENI.round), 24);
     this.material = createAccessoryMaterial(y.bodyMaterial, y.colors, { rim: 0.25 });
     this.outline = createAccessoryOutlineMaterial(y.outlineMaterial);
     this.mesh = withOutline(geometry, this.material, this.outline);
@@ -214,7 +248,7 @@ export class Peni {
     }
     // 先の細い所から押し出されるように：短いうちは細く、伸びながら設定の太さに
     const thick = EMERGE_THIN + (1 - EMERGE_THIN) * smoother(t / EMERGE_SLIDE);
-    this.mesh.scale.set(p.radius * R * thick, p.length * R * length, p.radius * R * thick);
+    this.reshape(p.radius * R * thick, p.length * R * length, p.round);
     this.outline.uniforms.uWidthScale.value = fade;
     // 体の色を変えたら合わせる
     const u = this.material.uniforms;
@@ -222,5 +256,18 @@ export class Peni {
     (u.uShade.value as THREE.Color).set(y.colors.shade);
     (u.uDeep.value as THREE.Color).set(y.colors.deep);
     (u.uRimColor.value as THREE.Color).set(y.colors.rim);
+  }
+
+  /** 根元の半径 r・長さ L・先の丸み round の形にする（前と少ししか変わらなければそのまま） */
+  private reshape(r: number, L: number, round: number): void {
+    if (round === this.builtRound && Math.abs(r - this.builtR) <= this.builtR * REBUILD_EPS &&
+      Math.abs(L - this.builtL) <= Math.max(this.builtL, r) * REBUILD_EPS) return;
+    this.builtR = r;
+    this.builtL = L;
+    this.builtRound = round;
+    const geometry = lathe(profile(r, Math.max(L, 1e-4), round), 24);
+    const old = (this.mesh.children[0] as THREE.Mesh).geometry;
+    for (const m of this.mesh.children) (m as THREE.Mesh).geometry = geometry;
+    old.dispose();
   }
 }
