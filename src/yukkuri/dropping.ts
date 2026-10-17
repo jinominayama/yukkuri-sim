@@ -252,7 +252,7 @@ export class Dropping {
    */
   start(opts: { front?: boolean } = {}): boolean {
     const y = this.y;
-    if (this.active || y.feeding.active || y.exercise.active) return false;
+    if (this.active || y.feeding.active || y.exercise.active || y.vomit.active) return false;
     // 移動はやめて、出し終わるまで保留する。体勢が変わっている途中（起き上がる・倒れ込む・寝返る・跳ねるなど）なら、
     // 立って止まるか寝転がり終えるまで待ってから出す（途中の向きで出口を決めると、横や前に出てしまう）
     y.locomotion.hold();

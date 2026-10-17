@@ -7,7 +7,7 @@ import type { ExpressionDef, SweatSpot } from './types';
  * multi のパーツ（汗）は1つを選ぶのではなく、選択肢ごとにオン・オフする。
  * 選択は選んだ選択肢の id をカンマでつないだ文字列で持つ（なしは空文字）。
  */
-export type FacePart = 'eyes' | 'brows' | 'mouth' | 'blush' | 'tears' | 'stream' | 'drool' | 'sweat' | 'strain';
+export type FacePart = 'eyes' | 'brows' | 'mouth' | 'blush' | 'tears' | 'stream' | 'drool' | 'sweat' | 'strain' | 'pale';
 
 export interface PartOption {
   id: string;
@@ -58,6 +58,7 @@ export const PARTS: PartDef[] = [
       { id: 'closed', name: '閉じ', value: { eyes: { kind: 'closed' } } },
       { id: 'squeeze', name: 'ぎゅっ（> <）', value: { eyes: { kind: 'squeeze' } } },
       { id: 'wink', name: 'ウインク', value: { eyes: { kind: 'open', open: 0.95, other: 'smile' } } },
+      { id: 'shock', name: '白目', value: { eyes: { kind: 'shock' } } },
     ],
   },
   {
@@ -83,6 +84,7 @@ export const PARTS: PartDef[] = [
       { id: 'wail', name: '叫び', value: { mouth: { kind: 'wail', open: 1 } } },
       { id: 'grit', name: '食いしばり', value: { mouth: { kind: 'grit' } } },
       { id: 'grin', name: '歯見せ笑い', value: { mouth: { kind: 'grin' } } },
+      { id: 'vomit', name: '吐く', value: { mouth: { kind: 'vomit' } } },
       { id: 'none', name: 'なし', value: { mouth: { kind: 'none' } } },
     ],
   },
@@ -143,13 +145,22 @@ export const PARTS: PartDef[] = [
       { id: 'max', name: '最大', value: { strain: 1 } },
     ],
   },
+  {
+    part: 'pale',
+    label: '青ざめ',
+    options: [
+      { id: 'none', name: 'なし', value: { pale: 0 } },
+      { id: 'some', name: '少し', value: { pale: 0.55 } },
+      { id: 'lots', name: '真っ青', value: { pale: 1 } },
+    ],
+  },
 ];
 
 export type PartSelection = Record<FacePart, string>;
 export type PartFlip = Record<FacePart, boolean>;
 
 export const NO_FLIP: PartFlip = {
-  eyes: false, brows: false, mouth: false, blush: false, tears: false, stream: false, drool: false, sweat: false, strain: false,
+  eyes: false, brows: false, mouth: false, blush: false, tears: false, stream: false, drool: false, sweat: false, strain: false, pale: false,
 };
 
 export function findPart(part: FacePart): PartDef {

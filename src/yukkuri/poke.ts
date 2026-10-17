@@ -116,9 +116,9 @@ export class Poke {
     }
   }
 
-  /** 食べている・うんうん・体操の最中か（その動きの顔を優先する） */
+  /** 食べている・うんうん・体操・吐いている最中か（その動きの顔を優先する） */
   private busy(): boolean {
     const y = this.y;
-    return y.feeding.active || y.dropping.active || y.exercise.active;
+    return y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active;
   }
 }

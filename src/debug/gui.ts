@@ -170,6 +170,14 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(exit.add(y.dropping.exit, 'rolledHeight', 0.05, 0.6, 0.01).name('高さ（横に転がった仰向け）').onChange(saveExit));
   exit.close();
 
+  // 吐餡：高い所から落ちると、口から餡子を吐く。吐いたものは「片付ける」まで残る
+  const vomit = gui.addFolder('吐餡');
+  const saveVomit = () => y.vomit.save();
+  vomit.add({ f: () => y.vomit.start() }, 'f').name('吐餡する');
+  noLock(vomit.add(y.vomit.params, 'face', { ランダム: 'random', 白目: 'shock', 泣く: 'cry' }).name('顔').onChange(saveVomit));
+  noLock(vomit.add(y.vomit.params, 'fallHeight', 0.3, 3, 0.05).name('吐く落下の高さ(m)').onChange(saveVomit));
+  vomit.add({ f: () => y.vomit.clear() }, 'f').name('片付ける');
+
   // ぺにぺに：顔の正面の下に生える円錐
   // 設定は体型ごとに保存する（体型を切り替えるとその体型の設定になるので、ロックは付けない）
   const peni = gui.addFolder('ぺにぺに');

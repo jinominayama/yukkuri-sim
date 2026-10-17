@@ -120,10 +120,13 @@ export class AnimeStyle implements FaceStyle {
       return this.eyeKind(ex, (f.eyes ? -screen : screen) as 1 | -1);
     };
     const sides = [1, -1] as const;
+    /** 涙の出どころ：開いた目（白目も）か、閉じた目か */
+    const shut = (k: EyeKind) => k !== 'open' && k !== 'shock';
+    if (ex.pale) layer(f.pale, () => this.drawPale(ctx, ex.pale!));
     if (ex.blush) layer(f.blush, () => this.drawBlush(ctx, ex.blush!));
     layer(f.eyes, () => sides.forEach((s) => this.drawEye(ctx, s, state)));
-    if (ex.tearStream) layer(f.stream, () => sides.forEach((s) => this.drawTearStream(ctx, s, eyeAt(s, f.stream) !== 'open', ex.tearStream!)));
-    if (ex.tears) layer(f.tears, () => sides.forEach((s) => this.drawTearPool(ctx, s, eyeAt(s, f.tears) !== 'open', ex.tears!)));
+    if (ex.tearStream) layer(f.stream, () => sides.forEach((s) => this.drawTearStream(ctx, s, shut(eyeAt(s, f.stream)), ex.tearStream!)));
+    if (ex.tears) layer(f.tears, () => sides.forEach((s) => this.drawTearPool(ctx, s, shut(eyeAt(s, f.tears)), ex.tears!)));
     if (ex.brows !== 'none') layer(f.brows, () => sides.forEach((s) => this.drawBrow(ctx, s, ex.brows, eyeAt(s, f.brows) === 'squeeze')));
     if (ex.mouth.kind !== 'none') {
       layer(f.mouth, () => {
@@ -160,6 +163,7 @@ export class AnimeStyle implements FaceStyle {
       case 'smile': this.drawSmileEye(ctx, s); break;
       case 'closed': this.drawClosedEye(ctx, s); break;
       case 'squeeze': this.drawSqueezeEye(ctx, s); break;
+      case 'shock': this.drawShockEye(ctx, s, state); break;
     }
   }
 
@@ -338,6 +342,41 @@ export class AnimeStyle implements FaceStyle {
     this.drawLidCrease(ctx, s, [[-0.35, 0.62], [0.25, 0.78], [0.8, 0.62]]);
   }
 
+  /**
+   * 白目をむく（参考：落とされて餡子を吐く魔理沙）。目を丸く見開き、白目の真ん中に点のような小さな瞳。
+   * 輪郭は全周を黒い線で囲み、上側を太くする
+   */
+  protected drawShockEye(ctx: CanvasRenderingContext2D, s: 1 | -1, state: FaceState): void {
+    const lw = this.lineWidth;
+    const { eyeW: w } = this.layout;
+    // 目の座標の、少し縦長の丸（上はやや平ら）
+    const ring: Pt[] = [];
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const y = Math.sin(a) * (a < Math.PI ? 1.0 : 1.12);
+      ring.push([Math.cos(a) * 1.02, y + 0.02]);
+    }
+    const line = this.eyeLine([...ring, ring[0]], s, 6);
+    const shape = this.closedPath([line]);
+    ctx.fillStyle = this.palette.white;
+    ctx.fill(shape);
+    ctx.save();
+    ctx.clip(shape);
+    // 上の縁の青灰色の影
+    ctx.fillStyle = 'rgba(150, 162, 196, 0.45)';
+    this.strokeVar(ctx, this.eyeLine([[-1.0, 0.6], [-0.4, 1.0], [0.4, 1.0], [1.0, 0.6]], s), w * 0.12, w * 0.22, w * 0.12);
+    ctx.restore();
+    // 小さな瞳（わずかに目頭寄り）
+    const [px, py] = this.eyeLine([[-0.08, 0.0]], s, 1)[0];
+    this.dot(ctx, px, py, w * 0.15, mix(state.look.iris, '#000000', 0.88));
+    // 輪郭：下は細め、上は太め
+    ctx.fillStyle = this.palette.line;
+    const top = line.slice(0, Math.round(line.length / 2) + 1);
+    const bottom = line.slice(Math.round(line.length / 2));
+    this.strokeVar(ctx, top, lw * 1.2, lw * 2.4, lw * 1.2);
+    this.strokeVar(ctx, bottom, lw * 1.2, lw * 1.0, lw * 1.2);
+  }
+
   // ---- 涙・眉 ----
 
   /** 頬を伝う涙の筋（大泣きのときだけ）。shut：その側の目が閉じているか */
@@ -391,6 +430,32 @@ export class AnimeStyle implements FaceStyle {
     }
     ctx.fillStyle = this.palette.brow;
     this.strokeVar(ctx, this.eyeLine(pts, s), width * 0.25, width, width * 0.3);
+  }
+
+  /**
+   * 青ざめ：顔の上の方（目より上）が青くかげり、縦線が何本も入る（漫画の「サーッ」と血の気が引く表現）
+   */
+  protected drawPale(ctx: CanvasRenderingContext2D, amount: number): void {
+    const { eyeX, eyeY, eyeW: w, eyeH: h } = this.layout;
+    const lw = this.lineWidth;
+    const bottom = eyeY - h * 1.6;
+    const g = ctx.createLinearGradient(0, 1.1, 0, bottom);
+    g.addColorStop(0, `rgba(80, 104, 178, ${0.5 * amount})`);
+    g.addColorStop(0.6, `rgba(80, 104, 178, ${0.28 * amount})`);
+    g.addColorStop(1, 'rgba(80, 104, 178, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(0, 1.1, eyeX + w * 1.6, 1.1 - bottom, 0, Math.PI, Math.PI * 2, false);
+    ctx.fill();
+    // 縦線：目の下あたりまで（目は後から描くので、目の所は隠れる）。長さは少しずつ変える
+    ctx.fillStyle = `rgba(40, 52, 120, ${0.6 * amount})`;
+    const n = 11;
+    const span = eyeX + w * 1.3;
+    for (let i = 0; i < n; i++) {
+      const x = -span + (2 * span * i) / (n - 1) + 0.02 * Math.sin(i * 2.7);
+      const end = eyeY - h * (0.6 + 0.6 * (0.5 + 0.5 * Math.sin(i * 1.9 + 0.4)));
+      this.strokeVar(ctx, [[x, 1.08], [x, (1.08 + end) / 2], [x, end]], lw * 0.9, lw * 0.7, lw * 0.1);
+    }
   }
 
   /** 力み：眉間と目のまわりのしわ */
@@ -478,6 +543,7 @@ export class AnimeStyle implements FaceStyle {
       case 'wail': this.mouthWail(ctx, open, width); break;
       case 'grit': this.mouthGrit(ctx, width); break;
       case 'o': this.mouthO(ctx, open); break;
+      case 'vomit': this.mouthVomit(ctx, open, width); break;
       case 'none': break;
     }
   }
@@ -763,6 +829,84 @@ export class AnimeStyle implements FaceStyle {
     ctx.fillStyle = 'rgba(226, 132, 108, 0.6)';
     this.strokeVar(ctx, this.curve([[-0.42, -0.68], [-0.25, -0.65], [-0.08, -0.68]], W, y), lw * 0.4, lw * 1.2, lw * 0.4);
     this.strokeVar(ctx, this.curve([[1.0, -0.24], [1.05, -0.32], [1.0, -0.42]], W, y), lw * 0.3, lw * 0.9, lw * 0.3);
+  }
+
+  /**
+   * 吐く（参考：餡子を吐く魔理沙）。縦に大きく開いた口に餡子が詰まって、下の縁からあふれ、
+   * 顎を太い流れで伝い落ちる。流れの縁はつぶつぶとでこぼこし、中に小豆の皮の粒が見える
+   */
+  protected mouthVomit(ctx: CanvasRenderingContext2D, open: number, width = 1): void {
+    const W = this.layout.mouthW * 1.45 * width;
+    const y = this.layout.mouthY - 0.12;
+    const lw = this.lineWidth;
+    const s = Math.max(0.4, Math.min(1, open));
+    const c = (pts: Pt[]) => this.curve(pts, W, y);
+    // 口：上は少し狭く、下へ広がる縦長の形
+    const top = c([[-0.62, 0.95 * s], [-0.2, 1.05 * s], [0.25, 1.04 * s], [0.66, 0.92 * s]]);
+    const right = c([[0.66, 0.92 * s], [0.9, 0.3 * s], [0.95, -0.4 * s], [0.84, -0.9 * s]]);
+    const bottom = c([[0.84, -0.9 * s], [0.3, -1.05 * s], [-0.35, -1.05 * s], [-0.86, -0.88 * s]]);
+    const left = c([[-0.86, -0.88 * s], [-0.95, -0.35 * s], [-0.88, 0.35 * s], [-0.62, 0.95 * s]]);
+    const shape = this.closedPath([top, right, bottom, left]);
+    ctx.fillStyle = this.palette.mouthDark;
+    ctx.fill(shape);
+    // 餡子の流れ：口の中ほどから、下の縁を越えて顎の下まで（縁はでこぼこ）
+    const len = 3.6;
+    const L: Pt[] = [], R: Pt[] = [];
+    const n = 18;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const yy = 0.25 * s - t * (len + 0.25 * s);
+      // 口の幅で出て、下へ少し広がる。縁のでこぼこは不揃いに
+      const half = 0.72 + 0.1 * t;
+      const sway = 0.1 * Math.sin(t * 3.1);
+      L.push([sway - half - 0.07 * Math.sin(i * 2.3) - 0.05 * Math.sin(i * 5.3 + 1.1), yy]);
+      R.push([sway + half + 0.07 * Math.sin(i * 1.7 + 1) + 0.05 * Math.sin(i * 4.1 + 0.3), yy]);
+    }
+    // 先は丸くふくらむ
+    const tip: Pt[] = [];
+    const [lx, ly] = L[L.length - 1], [rx] = R[R.length - 1];
+    for (let k = 1; k < 8; k++) {
+      const a = Math.PI + (Math.PI * k) / 8;
+      tip.push([(lx + rx) / 2 + Math.cos(a) * (rx - lx) * 0.56, ly + Math.sin(a) * 0.45]);
+    }
+    const flow = this.closedPath([c(L), c(tip), c(R.slice().reverse())]);
+    // 肌に落ちる影
+    ctx.save();
+    ctx.translate(W * 0.08, -W * 0.08);
+    ctx.fillStyle = 'rgba(90, 40, 30, 0.35)';
+    ctx.fill(flow);
+    ctx.restore();
+    ctx.fillStyle = '#4a2329';
+    ctx.fill(flow);
+    ctx.save();
+    ctx.clip(flow);
+    // 右側の陰と左寄りの照り
+    ctx.fillStyle = 'rgba(25, 8, 10, 0.55)';
+    this.strokeVar(ctx, c(R.map(([x, yy]): Pt => [x - 0.1, yy])), W * 0.12, W * 0.2, W * 0.1);
+    ctx.fillStyle = 'rgba(150, 92, 90, 0.5)';
+    this.strokeVar(ctx, c(L.slice(2, 14).map(([x, yy]): Pt => [x + 0.32, yy])), W * 0.03, W * 0.07, W * 0.02);
+    // 小豆の皮の粒
+    for (let i = 0; i < 22; i++) {
+      const t = (i * 0.618) % 1;
+      const k = Math.min(n - 1, Math.floor(t * n));
+      const [l0] = L[k], [r0] = R[k];
+      const u = (Math.sin(i * 12.9898) * 43758.5453) % 1;
+      const px = l0 + (r0 - l0) * (0.15 + 0.7 * Math.abs(u));
+      const py = L[k][1] - 0.1;
+      ctx.beginPath();
+      ctx.ellipse(px * W, y + py * W, W * 0.09, W * 0.055, i * 0.7, 0, Math.PI * 2);
+      ctx.fillStyle = i % 3 === 0 ? 'rgba(170, 110, 104, 0.8)' : 'rgba(30, 10, 12, 0.85)';
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.fillStyle = this.palette.line;
+    this.strokeVar(ctx, c(L), lw * 0.8, lw * 1.0, lw * 1.2);
+    this.strokeVar(ctx, c(R), lw * 0.8, lw * 1.2, lw * 1.4);
+    this.strokeVar(ctx, c([L[L.length - 1], ...tip, R[R.length - 1]]), lw * 1.2, lw * 1.4, lw * 1.2);
+    // 口の輪郭（餡子より手前に、上と左右の縁）
+    this.strokeVar(ctx, top, lw * 1.4, lw * 1.6, lw * 1.4);
+    this.strokeVar(ctx, left, lw * 1.0, lw * 1.4, lw * 1.4);
+    this.strokeVar(ctx, right, lw * 1.4, lw * 1.5, lw * 1.0);
   }
 
   protected mouthO(ctx: CanvasRenderingContext2D, open: number): void {

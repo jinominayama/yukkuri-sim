@@ -17,7 +17,8 @@ export type EyeKind =
   | 'open'    // 開いた目
   | 'smile'   // 笑って細めた目（^ ^）
   | 'closed'  // 穏やかに閉じた目
-  | 'squeeze'; // ぎゅっとつぶった目（> <）
+  | 'squeeze' // ぎゅっとつぶった目（> <）
+  | 'shock';  // 白目をむく（見開いた白目に、点のような小さな瞳）
 
 /** 眉の形 */
 export type BrowKind =
@@ -36,7 +37,8 @@ export type MouthKind =
   | 'sob'       // 泣いて開ける（角ばった斜めの台形）
   | 'wail'      // 大きく開けて泣き叫ぶ（口角が下がる）
   | 'grit'      // 歯を食いしばる
-  | 'o';        // 小さく丸く開ける
+  | 'o'         // 小さく丸く開ける
+  | 'vomit';    // 吐く（縦に大きく開いた口から、餡子があふれて顎を伝う）
 
 import type { FacePart } from './parts';
 
@@ -77,6 +79,8 @@ export interface ExpressionDef {
   sweat?: SweatSpot[];
   /** 眉間のしわ（力み）0〜1 */
   strain?: number;
+  /** 青ざめ（顔の上の方が青くなり、縦線が入る）0〜1 */
+  pale?: number;
   /** 自動でまばたきするか（目が開いている表情のみ意味がある） */
   blink?: boolean;
   /** パーツごとの左右反転 */

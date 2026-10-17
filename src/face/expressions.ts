@@ -23,7 +23,7 @@ const SWEAT_SOME = 'forehead,templeL,cheekL,cheekR,mouthL,bodyC';
 const SWEAT_LOTS = 'forehead,templeL,templeR,cheekL,cheekR,mouthL,mouthR,bodyL,bodyC,bodyR';
 
 const base: PartSelection = {
-  eyes: 'normal', brows: 'neutral', mouth: 'smirk', blush: 'none', tears: 'none', stream: 'none', drool: 'none', sweat: '', strain: 'none',
+  eyes: 'normal', brows: 'neutral', mouth: 'smirk', blush: 'none', tears: 'none', stream: 'none', drool: 'none', sweat: '', strain: 'none', pale: 'none',
 };
 
 export const EXPRESSIONS: ExpressionSet[] = [
@@ -47,6 +47,8 @@ export const EXPRESSIONS: ExpressionSet[] = [
   { id: 'content', name: 'ほっこり', parts: { ...base, eyes: 'smile', mouth: 'smileSmall', blush: 'mild' } },
   { id: 'surprised', name: 'びっくり', parts: { ...base, eyes: 'round', brows: 'worried', mouth: 'o', sweat: SWEAT_FEW } },
   { id: 'sleep', name: '眠る', parts: { ...base, eyes: 'closed' } },
+  // 参考：落ちた・毒を食べたなどで餡子を吐く（白目をむいて青ざめる）
+  { id: 'vomit', name: '吐餡', parts: { ...base, eyes: 'shock', brows: 'worried', mouth: 'vomit', tears: 'more', sweat: SWEAT_LOTS, pale: 'lots' } },
 ];
 
 export const DEFAULT_EXPRESSION_ID = 'normal';

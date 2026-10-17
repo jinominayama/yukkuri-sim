@@ -14,6 +14,7 @@ import { Dropping } from './dropping';
 import { Peni } from './peni';
 import { Exercise } from './exercise';
 import { Poke } from './poke';
+import { Vomit } from './vomit';
 import { TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
@@ -43,6 +44,8 @@ const GETUP_CLEAR = 1.1;
 const MAX_ROLLS_ASIDE = 2;
 /** 起き上がるときに体がお尻の側へずれる量の見込み（胴の半径に対する比） */
 const GETUP_SHIFT = 1.6;
+/** 起動・置き直しからこの時間（秒）は、落ちても吐かない（最初に置くときの落下を数えない） */
+const FALL_GRACE = 1;
 /** 立ち止まってからこの時間（秒）たったら「落ち着いている」とみなす（跳ねた後の帽子の浮きなどが収まるまで） */
 const STILL_TIME = 1;
 
@@ -70,6 +73,8 @@ export class Yukkuri {
   private readonly poking: Poke;
   /** うんうんたいそう（歌に合わせて体を動かし、最後にうんうんを出す） */
   readonly exercise: Exercise;
+  /** 吐餡（高い所から落ちたときなどに口から餡子を吐く。吐いたものは vomit.object をシーンに置いて表示する） */
+  readonly vomit: Vomit;
   /** ぺにぺに（顔の正面の下に生える円錐） */
   readonly peni: Peni;
   /** まわりに出す文字（texts.object をシーンに置いて表示する） */
@@ -92,6 +97,9 @@ export class Yukkuri {
   private readonly outline: THREE.Mesh;
   private restHeight = 1;
   private time = 0;
+  /** 宙にいる間の重心の一番高い所（地面に着いていれば null）と、落下を数え始める時刻 */
+  private airTop: number | null = null;
+  private fallFrom = FALL_GRACE;
 
   constructor() {
     const phys = createUnitSphere(PHYS_DETAIL);
@@ -124,6 +132,7 @@ export class Yukkuri {
     this.dropping.usePreset(this.presetId);
     this.exercise = new Exercise(this);
     this.poking = new Poke(this);
+    this.vomit = new Vomit(this);
     this.peni = new Peni(this);
     this.peni.usePreset(this.presetId);
     this.root.add(this.peni.object);
@@ -187,6 +196,7 @@ export class Yukkuri {
     let minY = Infinity;
     for (let i = 1; i < this.body.rest.length; i += 3) minY = Math.min(minY, this.body.rest[i]);
     this.body.reset(x, height - minY, z);
+    this.airTop = null;
     this.locomotion?.reset();
     this.skin.update(this.body);
   }
@@ -216,6 +226,21 @@ export class Yukkuri {
     }
     this.rollingAside = false;
     loco.getUp();
+  }
+
+  /**
+   * 落下を見張る：宙にいる間の重心の一番高い所を覚えておき、地面に着いたら落ちた距離を吐餡に知らせる
+   */
+  private watchFall(): void {
+    const b = this.body;
+    if (b.groundContacts === 0) {
+      this.airTop = Math.max(this.airTop ?? -Infinity, b.center.y);
+      return;
+    }
+    if (this.airTop === null) return;
+    const fall = this.airTop - b.center.y;
+    this.airTop = null;
+    if (this.time > this.fallFrom) this.vomit.landed(fall);
   }
 
   /** 点 point を方向 dir につつく（へこんで弾み、驚いた顔をする） */
@@ -250,6 +275,8 @@ export class Yukkuri {
     this.body.volumeScale = 1 + this.life.breath * Math.sin(this.time * Math.PI * 2 * this.life.breathRate);
     // 寝返りで横へずれてから起き上がる：寝返りが終わったら、まだ塊に近ければもう一度、離れていれば起き上がる
     if (this.rollingAside && this.locomotion.resting) this.getUp();
+    this.watchFall();
+    this.vomit.update(dt); // 吐くときの身ぶりも移動の処理より先に指示する
     this.exercise.update(dt); // 体操の身ぶりを移動の処理より先に指示する
     this.locomotion.update(dt, this.physics.gravity);
     this.feeding.update(dt);
@@ -276,6 +303,7 @@ export class Yukkuri {
     this.outfit.update(still);
     this.peni.update(still);
     this.dropping.sync();
+    this.vomit.sync();
     this.face.render();
 
     // 影：重心の真下。高く跳ぶほど小さく薄く

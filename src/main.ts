@@ -62,6 +62,7 @@ const yukkuri = new Yukkuri();
 scene.add(yukkuri.root);
 scene.add(yukkuri.feeding.object);
 scene.add(yukkuri.dropping.object);
+scene.add(yukkuri.vomit.object);
 scene.add(yukkuri.texts.object);
 yukkuri.drop(0.6);
 // 帽子の先まで入るよう、少し上を見て少し引く
