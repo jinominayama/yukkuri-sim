@@ -20,6 +20,9 @@ export interface ViewSettings {
   pokeStrength: number;
 }
 
+/** 保存した値が消えるボタンを、2 回目の押下で実行するまでに待つ時間（秒） */
+const CONFIRM_TIME = 4;
+
 /** 調整パネル（開発中のみ） */
 export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   const gui = new GUI({ title: '調整パネル' });
@@ -56,11 +59,42 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       showInfo(presetState.id, ok ? `現在の値を「${name}」に保存しました。` : '保存できませんでした（保存領域が使えません）。');
     },
   }, 'f').name('現在の値をこの体型に保存');
-  pre.add({
-    f: () => {
+  /**
+   * 保存した値が消えるボタン：warn() が文を返すときは、1 回目は注意を出して「もう一度押すと実行」に変わり、
+   * CONFIRM_TIME 秒以内にもう一度押したら実行する。
+   * ブラウザの確認の窓（confirm）は使わない（アプリ内のブラウザなどでは窓が出ずに「いいえ」になり、何も起きない）
+   */
+  const twoStep = (label: string, warn: () => string | null, run: () => void) => {
+    let armed = false;
+    let timer = 0;
+    const disarm = () => {
+      armed = false;
+      clearTimeout(timer);
+      ctrl.name(label);
+    };
+    const ctrl = pre.add({
+      f: () => {
+        const text = warn();
+        if (text && !armed) {
+          armed = true;
+          ctrl.name('もう一度押すと実行');
+          showInfo(presetState.id, `${text}よければ、もう一度押してください。`);
+          timer = window.setTimeout(() => {
+            disarm();
+            showInfo(presetState.id);
+          }, CONFIRM_TIME * 1000);
+          return;
+        }
+        disarm();
+        run();
+      },
+    }, 'f').name(label);
+  };
+  twoStep('現在の値をユーザー設定に上書き',
+    () => presetState.id === USER_PRESET_ID ? null
+      : `現在の値（${findPreset(presetState.id)?.name ?? ''}）でユーザー設定を上書きします。ユーザー設定に保存していた値は消えます。`,
+    () => {
       const from = findPreset(presetState.id)?.name ?? '';
-      if (presetState.id !== USER_PRESET_ID &&
-        !confirm(`現在の値（${from}）でユーザー設定を上書きします。ユーザー設定に保存していた値は消えます。よろしいですか？`)) return;
       const ok = savePreset(USER_PRESET_ID, y);
       if (ok) {
         y.outfit.copyFitTo(USER_PRESET_ID); // 帽子・髪の厚み・三つ編みの長さも一緒に写す
@@ -68,13 +102,11 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
         y.dropping.copyExitTo(USER_PRESET_ID); // うんうんの出る位置も
       }
       showInfo(presetState.id, ok ? `現在の値（${from}）をユーザー設定に上書きしました。` : '保存できませんでした（保存領域が使えません）。');
-    },
-  }, 'f').name('現在の値をユーザー設定に上書き');
-  pre.add({
-    f: () => {
-      const name = findPreset(presetState.id)?.name ?? '';
-      if (isOverridden(presetState.id) &&
-        !confirm(`「${name}」を初期設定に戻します。保存した値は消えます。よろしいですか？`)) return;
+    });
+  twoStep('この体型を初期設定に戻す',
+    () => isOverridden(presetState.id)
+      ? `「${findPreset(presetState.id)?.name ?? ''}」を初期設定に戻します。保存した値は消えます。` : null,
+    () => {
       resetPreset(presetState.id);
       Object.assign(y.life, DEFAULT_LIFE);
       Object.assign(y.colors, DEFAULT_SKIN);
@@ -84,8 +116,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       y.peni.reset();
       y.dropping.resetExit();
       applyPreset(presetState.id);
-    },
-  }, 'f').name('この体型を初期設定に戻す');
+    });
   showInfo(y.presetId);
 
   // パネルは目的ごとに 5 つの大見出しにまとめる：
