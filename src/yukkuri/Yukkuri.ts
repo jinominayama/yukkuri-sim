@@ -118,6 +118,7 @@ export class Yukkuri {
     this.locomotion = new Locomotion(this.body, this.move);
     this.feeding = new Feeding(this);
     this.dropping = new Dropping(this);
+    this.dropping.usePreset(this.presetId);
     this.exercise = new Exercise(this);
     this.peni = new Peni(this);
     this.peni.usePreset(this.presetId);
@@ -159,6 +160,7 @@ export class Yukkuri {
     this.presetId = p.id;
     this.outfit.usePreset(p.id); // 帽子・髪の厚み・三つ編みの長さは体型ごと
     this.peni.usePreset(p.id); // ぺにぺにの設定も体型ごと
+    this.dropping.usePreset(p.id); // うんうんの出る位置も体型ごと
     this.locomotion.reset();
     this.applyShape();
     this.drop(0.02);
@@ -269,6 +271,7 @@ export class Yukkuri {
     const still = this.locomotion.idleTime > STILL_TIME;
     this.outfit.update(still);
     this.peni.update(still);
+    this.dropping.sync();
     this.face.render();
 
     // 影：重心の真下。高く跳ぶほど小さく薄く

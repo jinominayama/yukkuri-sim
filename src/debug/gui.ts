@@ -63,6 +63,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       if (ok) {
         y.outfit.copyFitTo(USER_PRESET_ID); // 帽子・髪の厚み・三つ編みの長さも一緒に写す
         y.peni.copyTo(USER_PRESET_ID); // ぺにぺにの設定も
+        y.dropping.copyExitTo(USER_PRESET_ID); // うんうんの出る位置も
       }
       showInfo(presetState.id, ok ? `現在の値（${from}）をユーザー設定に上書きしました。` : '保存できませんでした（保存領域が使えません）。');
     },
@@ -155,6 +156,15 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
     f: () => y.exercise.start(exerciseOpts.pose === 'random' ? undefined : exerciseOpts.pose === 'prone'),
   }, 'f').name('うんうんたいそう');
   poo.add({ f: () => y.dropping.clear() }, 'f').name('片付ける');
+  // 出る位置：体型ごとに保存する（体型を切り替えるとその体型の値になるので、ロックは付けない）
+  const exit = poo.addFolder('出る位置');
+  const saveExit = () => y.dropping.saveExit();
+  noLock(exit.add(y.dropping, 'showExit').name('出る位置を表示'));
+  noLock(exit.add(y.dropping.exit, 'height', 0.05, 0.6, 0.01).name('高さ（背中側）').onChange(saveExit));
+  noLock(exit.add(y.dropping.exit, 'side', -1, 1, 0.01).name('左右（+で体の右）').onChange(saveExit));
+  noLock(exit.add(y.dropping.exit, 'frontHeight', 0.03, 0.4, 0.01).name('高さ（前から出すとき）').onChange(saveExit));
+  noLock(exit.add(y.dropping.exit, 'supineHeight', 0.2, 0.9, 0.01).name('高さ（寝転んで仰向け）').onChange(saveExit));
+  exit.close();
 
   // ぺにぺに：顔の正面の下に生える円錐
   // 設定は体型ごとに保存する（体型を切り替えるとその体型の設定になるので、ロックは付けない）
@@ -242,6 +252,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       // この体型の帽子・髪の厚み・三つ編みの長さも戻す（付け直しは体型を置き直すときに一緒に行われる）
       y.outfit.resetFit();
       y.peni.reset();
+      y.dropping.resetExit();
       applyPreset(presetState.id);
     },
   }, 'reset').name('この体型を初期設定に戻す');

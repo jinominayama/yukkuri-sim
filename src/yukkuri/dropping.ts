@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createAccessoryMaterial } from '../render/accessoryMaterial';
 import { createAccessoryOutlineMaterial } from '../render/outlineMaterial';
 import type { PartSelection } from '../face/parts';
+import { loadJSON, saveJSON } from '../platform/storage';
 import { faceFrame, showFace } from './fx';
 import type { Yukkuri } from './Yukkuri';
 
@@ -19,17 +20,27 @@ import type { Yukkuri } from './Yukkuri';
  */
 type Phase = 'none' | 'wait' | 'push' | 'relief';
 
-/** 出口：背中側（顔の正面から π）の、床から体の高さのこの比の所 */
-const EXIT_HEIGHT = 0.26;
-/** 前から出すとき（うんうんたいそうで後ろへ反ったとき）の出口：体の正面の、床から体の高さのこの割合（口よりずっと下） */
-const FRONT_EXIT_HEIGHT = 0.12;
-/**
- * 仰向けの出口：背中側の ±この角度・床から（寝転ぶ前の）体の高さのこの比以下の範囲で、
- * 今の高さが寝転んだ体の高さのこの比に一番近い所
- */
+/** 出口の位置の調整値（体型ごとに保存する。調整パネルの「うんうん」→「出る位置」） */
+export interface ExitParams {
+  /** いつもの出口：背中側（顔の正面から π）の、床から体の高さのこの比の所 */
+  height: number;
+  /** 左右のずれ（rad。+ で体の右へ）。どの出口にも効く */
+  side: number;
+  /** 前から出すとき（うんうんたいそうで後ろへ反ったとき）の出口：体の正面の、床から体の高さのこの比（口よりずっと下） */
+  frontHeight: number;
+  /** 寝転んで仰向けのときの出口：今の高さが、寝転んだ体の高さのこの比に一番近い所 */
+  supineHeight: number;
+}
+
+export const DEFAULT_EXIT: ExitParams = { height: 0.26, side: 0, frontHeight: 0.12, supineHeight: 0.6 };
+
+/** 保存先。体型 ID → その体型の調整値（初期値のままの体型は持たない） */
+const STORAGE_KEY = 'droppingExit';
+/** 仰向けの出口を探す範囲：背中側の ±この角度・床から（寝転ぶ前の）体の高さのこの比以下 */
 const SUPINE_AZ_RANGE = 1.6;
 const SUPINE_MAX_HEIGHT = 0.6;
-const SUPINE_EXIT_Y = 0.6;
+/** 出口の目印の大きさ（胴の半径に対する比） */
+const MARKER_SIZE = 0.06;
 /** 塊の一番太い所の横幅の半分・高さの半分・地面に寝そべる長さ（胴の半径に対する比） */
 const HALF_WIDTH = 0.3;
 const HALF_HEIGHT = 0.27;
@@ -114,10 +125,92 @@ export class Dropping {
   private t = 0;
   /** 今回は体の前から出す（出し終わっても前へ跳ねない） */
   private front = false;
+  /** 出口の位置の調整値と、体型ごとの保存 */
+  readonly exit: ExitParams = { ...DEFAULT_EXIT };
+  private readonly savedExit: Record<string, ExitParams>;
+  private presetId = '';
+  /** 出口の目印を出すか（調整用）。赤：いつもの出口（仰向けで寝転んでいれば仰向けの出口）、青：前から出すときの出口 */
+  showExit = false;
+  private readonly markers: THREE.Mesh[];
 
   constructor(private readonly y: Yukkuri) {
     this.material = createAccessoryMaterial(y.bodyMaterial, ANKO, { rim: 0.25 });
     this.outline = createAccessoryOutlineMaterial(y.outlineMaterial);
+    this.savedExit = { ...loadJSON<Record<string, ExitParams>>(STORAGE_KEY) };
+    // 目印：体の表面から少し外へ浮かせて置く（体の向こう側にあるときは体に隠れる。透けて見えると、どちら側か分からない）
+    const ball = new THREE.SphereGeometry(1, 16, 12);
+    this.markers = ['#ff3b30', '#2f7bff'].map((color) => {
+      const m = new THREE.Mesh(ball, new THREE.MeshBasicMaterial({ color }));
+      m.visible = false;
+      this.object.add(m);
+      return m;
+    });
+  }
+
+  /** 体型を切り替える：出口の調整値を、その体型で保存したもの（なければ初期値）にする */
+  usePreset(id: string): void {
+    this.presetId = id;
+    Object.assign(this.exit, DEFAULT_EXIT, this.savedExit[id]);
+  }
+
+  /** 今の体型の出口の調整値を初期値に戻す */
+  resetExit(): void {
+    Object.assign(this.exit, DEFAULT_EXIT);
+    this.saveExit();
+  }
+
+  /** 今の出口の調整値を、別の体型（ユーザー設定など）にも写す */
+  copyExitTo(id: string): void {
+    this.storeExit(id);
+    saveJSON(STORAGE_KEY, this.savedExit);
+  }
+
+  /** 今の出口の調整値を、今の体型のものとして保存する */
+  saveExit(): void {
+    if (!this.presetId) return;
+    this.storeExit(this.presetId);
+    saveJSON(STORAGE_KEY, this.savedExit);
+  }
+
+  private storeExit(id: string): void {
+    const e = this.exit;
+    const same = (Object.keys(DEFAULT_EXIT) as (keyof ExitParams)[]).every((k) => e[k] === DEFAULT_EXIT[k]);
+    if (same) delete this.savedExit[id];
+    else this.savedExit[id] = { ...e };
+  }
+
+  /**
+   * 出口の今の位置と法線。front：体の前から出すときの出口。
+   * 寝転んで仰向けのとき（前から出すときを除く）は、背中が地面に着いていつもの出口が地面すれすれになるので、
+   * 背中の下側の範囲から、地面から高い所を選び直す。求められないときは false
+   */
+  private exitPoint(front: boolean, pos: THREE.Vector3, nrm: THREE.Vector3): boolean {
+    const y = this.y;
+    const e = this.exit;
+    // 向き az は顔の正面が 0・背中が π で、体の右へ回ると背中側は増え、正面側は減る
+    if (front) return y.outfit.surfacePoint(-e.side, e.frontHeight, pos, nrm);
+    if (!y.outfit.surfacePoint(Math.PI + e.side, e.height, pos, nrm)) return false;
+    if (y.locomotion.lyingPose === 'supine') {
+      // 体の高さは寝転んだ今の高さ（体の一番高い所）
+      const p = y.bodyMesh.geometry.getAttribute('position').array as Float32Array;
+      let top = 0;
+      for (let i = 1; i < p.length; i += 3) top = Math.max(top, p[i]);
+      y.outfit.surfacePointAt(Math.PI + e.side, SUPINE_AZ_RANGE, SUPINE_MAX_HEIGHT, top * e.supineHeight, pos, nrm);
+    }
+    return true;
+  }
+
+  /** 描画の直前に呼ぶ（体の描画メッシュを更新した後）：出口の目印を体の今の形に合わせて置く */
+  sync(): void {
+    const show = this.showExit;
+    const R = this.y.shape.radius;
+    const pos = new THREE.Vector3(), nrm = new THREE.Vector3();
+    this.markers.forEach((m, i) => {
+      m.visible = show && this.exitPoint(i === 1, pos, nrm);
+      if (!m.visible) return;
+      m.position.copy(pos).addScaledVector(nrm, MARKER_SIZE * R * 0.6);
+      m.scale.setScalar(MARKER_SIZE * R);
+    });
   }
 
   /** 出し始めるのを待っているか、出している最中か（すっきりーの前まで） */
@@ -157,17 +250,9 @@ export class Dropping {
   private begin(): void {
     const y = this.y;
     const pos = new THREE.Vector3(), nrm = new THREE.Vector3();
-    if (!(this.front ? y.outfit.surfacePoint(0, FRONT_EXIT_HEIGHT, pos, nrm) : y.outfit.surfacePoint(Math.PI, EXIT_HEIGHT, pos, nrm))) {
+    if (!this.exitPoint(this.front, pos, nrm)) {
       this.finish();
       return;
-    }
-    // 仰向けでは背中が地面に着き、いつもの出口は地面すれすれになる。背中の下側の範囲から、地面から高い所を選び直す
-    if (!this.front && y.locomotion.lyingPose === 'supine') {
-      // 体の高さは寝転んだ今の高さ（体の一番高い所）
-      const p = y.bodyMesh.geometry.getAttribute('position').array as Float32Array;
-      let top = 0;
-      for (let i = 1; i < p.length; i += 3) top = Math.max(top, p[i]);
-      y.outfit.surfacePointAt(Math.PI, SUPINE_AZ_RANGE, SUPINE_MAX_HEIGHT, top * SUPINE_EXIT_Y, pos, nrm);
     }
     const pile = this.makePile(pos, nrm);
     this.piles.push(pile);
