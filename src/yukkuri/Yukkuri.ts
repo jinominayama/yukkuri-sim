@@ -244,6 +244,7 @@ export class Yukkuri {
     this.locomotion.update(dt, this.physics.gravity);
     this.feeding.update(dt);
     this.dropping.update(dt);
+    this.peni.step(dt);
     this.texts.update(dt);
     this.body.step(dt, this.physics);
   }

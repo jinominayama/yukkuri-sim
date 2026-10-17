@@ -50,6 +50,27 @@ const AZ_RANGE = 0.25;
 const GROUND_CLEAR = 0.02;
 const HIDE_NORMAL_Y = -0.92;
 
+/**
+ * 出し入れの動き：出し始めから出しきるまでの時間（秒）と、引っ込めるときの時間（秒）。
+ * 出るときは先の細い所から押し出されるように伸び（EMERGE_SLIDE までの割合で、少し行き過ぎた長さ 1 + EMERGE_OVER まで）、
+ * 残りの時間で揺れながら元の長さに落ち着く。引っ込むときは同じ動きを逆にたどる
+ */
+const EMERGE_TIME = 1.6;
+const RETRACT_TIME = 0.9;
+const EMERGE_SLIDE = 0.7;
+const EMERGE_OVER = 0.08;
+/** 出始めの太さ（設定の太さに対する比）。伸びながら設定の太さになる */
+const EMERGE_THIN = 0.55;
+/** 伸びている間に先を左右へくねらせる振れ幅（ラジアン）と回数 */
+const WIGGLE = 0.12;
+const WIGGLE_TURNS = 1.5;
+
+/** 0〜1 をなめらかに（始めと終わりの速さが 0、加速度も 0） */
+function smoother(t: number): number {
+  t = THREE.MathUtils.clamp(t, 0, 1);
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
 export class Peni {
   readonly object = new THREE.Group();
   readonly params: PeniParams = { ...DEFAULT_PENI };
@@ -66,6 +87,10 @@ export class Peni {
   /** 生やしている体の頂点（-1 は未定）と、それを選んだときの設定 */
   private vertex = -1;
   private chosenFor = '';
+  /** 出し入れの進み具合（0 で引っ込んでいる、1 で出しきった） */
+  private progress = 0;
+  private readonly axis = new THREE.Vector3();
+  private readonly wiggle = new THREE.Quaternion();
 
   constructor(private readonly y: Yukkuri) {
     // 根元（y = 0）から先端（y = 1）へ細くなる円錐。根元は体に少し埋めて、継ぎ目を見せない。先端は少し丸める
@@ -84,6 +109,22 @@ export class Peni {
   usePreset(id: string): void {
     this.presetId = id;
     Object.assign(this.params, DEFAULT_PENI, this.saved[id]);
+    // 開いたとき・体型を切り替えたときは動きを付けず、その体型の状態から始める
+    this.progress = this.params.show ? 1 : 0;
+  }
+
+  /** 固定時間刻みで呼ぶ：出し入れを進める（「出す」を切り替えると、その向きへ動く） */
+  step(dt: number): void {
+    if (this.params.show) this.progress = Math.min(1, this.progress + dt / EMERGE_TIME);
+    else this.progress = Math.max(0, this.progress - dt / RETRACT_TIME);
+  }
+
+  /** 進み具合 t のときの長さ（設定の長さに対する比） */
+  private static lengthAt(t: number): number {
+    if (t < EMERGE_SLIDE) return (1 + EMERGE_OVER) * smoother(t / EMERGE_SLIDE);
+    // 行き過ぎた所から、揺れながら元の長さへ（つなぎ目で長さが跳ばないよう cos で始める）
+    const q = (t - EMERGE_SLIDE) / (1 - EMERGE_SLIDE);
+    return 1 + EMERGE_OVER * Math.cos(Math.PI * 1.5 * q) * Math.exp(-3 * q) * (1 - smoother(q));
   }
 
   /** 今の体型の設定を初期値に戻す */
@@ -118,8 +159,9 @@ export class Peni {
    */
   update(still: boolean): void {
     const p = this.params;
-    this.object.visible = p.show;
-    if (!p.show) return;
+    const t = this.progress;
+    this.object.visible = t > 0;
+    if (t <= 0) return;
     const y = this.y;
     const R = y.shape.radius;
     const key = `${p.at}|${y.outfit.builds}`;
@@ -151,7 +193,17 @@ export class Peni {
     this.dir.normalize().lerp(Peni.UP, p.rise).normalize();
     this.mesh.position.copy(this.pos);
     this.mesh.quaternion.setFromUnitVectors(Peni.UP, this.dir);
-    this.mesh.scale.set(p.radius * R, p.length * R, p.radius * R);
+    // 伸びている間は先を左右へくねらせる（向きに垂直で、なるべく縦の軸のまわりに回す）
+    const sway = WIGGLE * Math.sin(Math.PI * 2 * WIGGLE_TURNS * t) * (1 - smoother(t));
+    if (sway !== 0) {
+      this.axis.copy(Peni.UP).addScaledVector(this.dir, -this.dir.y);
+      if (this.axis.lengthSq() < 1e-6) this.axis.set(this.nrm.x, 0, this.nrm.z);
+      if (this.axis.lengthSq() > 1e-6) this.mesh.quaternion.premultiply(this.wiggle.setFromAxisAngle(this.axis.normalize(), sway));
+    }
+    // 先の細い所から押し出されるように：短いうちは細く、伸びながら設定の太さに
+    const length = Peni.lengthAt(t);
+    const thick = EMERGE_THIN + (1 - EMERGE_THIN) * smoother(t / EMERGE_SLIDE);
+    this.mesh.scale.set(p.radius * R * thick, p.length * R * length, p.radius * R * thick);
     // 体の色を変えたら合わせる
     const u = this.material.uniforms;
     (u.uLit.value as THREE.Color).set(y.colors.lit);
