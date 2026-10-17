@@ -116,6 +116,7 @@ export class Yukkuri {
     this.feeding = new Feeding(this);
     this.dropping = new Dropping(this);
     this.peni = new Peni(this);
+    this.peni.usePreset(this.presetId);
     this.root.add(this.peni.object);
     this.applyShape();
     // 初めて開いたときは魔理沙で始める（テスト版）
@@ -153,6 +154,7 @@ export class Yukkuri {
     Object.assign(this.move, p.move);
     this.presetId = p.id;
     this.outfit.usePreset(p.id); // 帽子・髪の厚み・三つ編みの長さは体型ごと
+    this.peni.usePreset(p.id); // ぺにぺにの設定も体型ごと
     this.locomotion.reset();
     this.applyShape();
     this.drop(0.02);

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createAccessoryMaterial } from '../render/accessoryMaterial';
 import { createAccessoryOutlineMaterial } from '../render/outlineMaterial';
 import { lathe, withOutline } from '../character/shapes';
+import { loadJSON, saveJSON } from '../platform/storage';
 import type { Yukkuri } from './Yukkuri';
 
 /**
@@ -22,6 +23,9 @@ export interface PeniParams {
 }
 
 export const DEFAULT_PENI: PeniParams = { show: false, at: 0.45, length: 0.28, radius: 0.075, rise: 0.3 };
+
+/** 保存先。体型 ID → その体型の設定（初期値のままの体型は持たない） */
+const STORAGE_KEY = 'peni';
 
 /** 口の下端の位置（顔座標。単位は頭の半径） */
 const MOUTH_BOTTOM_FY = -0.25;
@@ -49,6 +53,10 @@ const HIDE_NORMAL_Y = -0.92;
 export class Peni {
   readonly object = new THREE.Group();
   readonly params: PeniParams = { ...DEFAULT_PENI };
+  /** 体型 ID → 設定（初期値から変えた体型だけ） */
+  private readonly saved: Record<string, PeniParams>;
+  /** 今の体型（設定をどの体型のものとして読み書きするか） */
+  private presetId = '';
   private readonly mesh: THREE.Group;
   private readonly material: THREE.ShaderMaterial;
   private readonly pos = new THREE.Vector3();
@@ -69,6 +77,39 @@ export class Peni {
     this.mesh = withOutline(geometry, this.material, createAccessoryOutlineMaterial(y.outlineMaterial));
     this.object.add(this.mesh);
     this.object.visible = false;
+    this.saved = { ...loadJSON<Record<string, PeniParams>>(STORAGE_KEY) };
+  }
+
+  /** 体型を切り替える：設定を、その体型で保存したもの（なければ初期値）にする */
+  usePreset(id: string): void {
+    this.presetId = id;
+    Object.assign(this.params, DEFAULT_PENI, this.saved[id]);
+  }
+
+  /** 今の体型の設定を初期値に戻す */
+  reset(): void {
+    Object.assign(this.params, DEFAULT_PENI);
+    this.save();
+  }
+
+  /** 今の設定を、別の体型（ユーザー設定など）にも写す */
+  copyTo(id: string): void {
+    this.store(id);
+    saveJSON(STORAGE_KEY, this.saved);
+  }
+
+  /** 今の設定を、今の体型のものとして保存する */
+  save(): void {
+    if (!this.presetId) return;
+    this.store(this.presetId);
+    saveJSON(STORAGE_KEY, this.saved);
+  }
+
+  private store(id: string): void {
+    const p = this.params;
+    const same = (Object.keys(DEFAULT_PENI) as (keyof PeniParams)[]).every((k) => p[k] === DEFAULT_PENI[k]);
+    if (same) delete this.saved[id];
+    else this.saved[id] = { ...p };
   }
 
   /**

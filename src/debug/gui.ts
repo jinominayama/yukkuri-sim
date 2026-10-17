@@ -60,7 +60,10 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       if (presetState.id !== USER_PRESET_ID &&
         !confirm(`現在の値（${from}）でユーザー設定を上書きします。ユーザー設定に保存していた値は消えます。よろしいですか？`)) return;
       const ok = savePreset(USER_PRESET_ID, y);
-      if (ok) y.outfit.copyFitTo(USER_PRESET_ID); // 帽子・髪の厚み・三つ編みの長さも一緒に写す
+      if (ok) {
+        y.outfit.copyFitTo(USER_PRESET_ID); // 帽子・髪の厚み・三つ編みの長さも一緒に写す
+        y.peni.copyTo(USER_PRESET_ID); // ぺにぺにの設定も
+      }
       showInfo(presetState.id, ok ? `現在の値（${from}）をユーザー設定に上書きしました。` : '保存できませんでした（保存領域が使えません）。');
     },
   }, 'f').name('現在の値をユーザー設定に上書き');
@@ -147,12 +150,14 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   poo.add({ f: () => y.dropping.clear() }, 'f').name('片付ける');
 
   // ぺにぺに：顔の正面の下に生える円錐
+  // 設定は体型ごとに保存する（体型を切り替えるとその体型の設定になるので、ロックは付けない）
   const peni = gui.addFolder('ぺにぺに');
-  peni.add(y.peni.params, 'show').name('出す');
-  peni.add(y.peni.params, 'at', 0, 1, 0.01).name('位置（口の下〜体の下端）');
-  peni.add(y.peni.params, 'length', 0.05, 0.6, 0.01).name('長さ');
-  peni.add(y.peni.params, 'radius', 0.02, 0.2, 0.005).name('太さ');
-  peni.add(y.peni.params, 'rise', 0, 1, 0.05).name('上向き');
+  const savePeni = () => y.peni.save();
+  noLock(peni.add(y.peni.params, 'show').name('出す').onChange(savePeni));
+  noLock(peni.add(y.peni.params, 'at', 0, 1, 0.01).name('位置（口の下〜地面）').onChange(savePeni));
+  noLock(peni.add(y.peni.params, 'length', 0.05, 0.6, 0.01).name('長さ').onChange(savePeni));
+  noLock(peni.add(y.peni.params, 'radius', 0.02, 0.2, 0.005).name('太さ').onChange(savePeni));
+  noLock(peni.add(y.peni.params, 'rise', 0, 1, 0.05).name('上向き').onChange(savePeni));
 
   const pose = gui.addFolder('体勢');
   pose.add({ f: () => y.locomotion.lieDown('prone') }, 'f').name('腹ばいになる');
@@ -228,6 +233,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       y.applyColors();
       // この体型の帽子・髪の厚み・三つ編みの長さも戻す（付け直しは体型を置き直すときに一緒に行われる）
       y.outfit.resetFit();
+      y.peni.reset();
       applyPreset(presetState.id);
     },
   }, 'reset').name('この体型を初期設定に戻す');
