@@ -39,6 +39,21 @@ export interface ExitParams {
 
 export const DEFAULT_EXIT: ExitParams = { height: 0.26, side: 0, frontHeight: 0.12, supineHeight: 0.6, rolledHeight: 0.26 };
 
+/** 体型ごとの出口の初期値（DEFAULT_EXIT との違いだけ。体型 ID → 値）。調整パネルで体型ごとに合わせた値 */
+const PRESET_EXIT: Record<string, Partial<ExitParams>> = {
+  ball: { height: 0.18, frontHeight: 0.11, supineHeight: 0.59 },
+  egg: { height: 0.15 },
+  chick: { height: 0.14 },
+  flat: { height: 0.17, supineHeight: 0.63 },
+  eggplant: { height: 0.11 },
+  caterpillar: { height: 0.21 },
+};
+
+/** 体型 id の出口の初期値 */
+function exitDefaults(id: string): ExitParams {
+  return { ...DEFAULT_EXIT, ...PRESET_EXIT[id] };
+}
+
 /** 保存先。体型 ID → その体型の調整値（初期値のままの体型は持たない） */
 const STORAGE_KEY = 'droppingExit';
 /** 仰向けの出口を探す範囲：背中側の ±この角度・床から（寝転ぶ前の）体の高さのこの比以下 */
@@ -155,12 +170,12 @@ export class Dropping {
   /** 体型を切り替える：出口の調整値を、その体型で保存したもの（なければ初期値）にする */
   usePreset(id: string): void {
     this.presetId = id;
-    Object.assign(this.exit, DEFAULT_EXIT, this.savedExit[id]);
+    Object.assign(this.exit, exitDefaults(id), this.savedExit[id]);
   }
 
-  /** 今の体型の出口の調整値を初期値に戻す */
+  /** 今の体型の出口の調整値を初期値（その体型の初期値）に戻す */
   resetExit(): void {
-    Object.assign(this.exit, DEFAULT_EXIT);
+    Object.assign(this.exit, exitDefaults(this.presetId));
     this.saveExit();
   }
 
@@ -179,7 +194,8 @@ export class Dropping {
 
   private storeExit(id: string): void {
     const e = this.exit;
-    const same = (Object.keys(DEFAULT_EXIT) as (keyof ExitParams)[]).every((k) => e[k] === DEFAULT_EXIT[k]);
+    const d = exitDefaults(id);
+    const same = (Object.keys(d) as (keyof ExitParams)[]).every((k) => e[k] === d[k]);
     if (same) delete this.savedExit[id];
     else this.savedExit[id] = { ...e };
   }
