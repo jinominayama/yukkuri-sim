@@ -89,7 +89,8 @@ export class WitchHat implements Accessory {
     const trim = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { doubleSide: true, ground: GROUND_CROWN });
     const crownCloth = createAccessoryMaterial(ctx.bodyMaterial, st.cloth, { rim: 0.35, doubleSide: true, ground: GROUND_CROWN });
     this.materials.push(crownCloth);
-    const trimBoth = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { doubleSide: true });
+    // 帯のリボン：帯と同じ高さで止める（ほかの飾りと同じ高さだと、逆さまに押しつぶされたとき、つばより上に出て突き抜けて見える）
+    const trimBoth = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { doubleSide: true, ground: GROUND_CROWN });
     this.materials.push(clothBoth, trim, trimBoth);
     const ol = ctx.outlineMaterial;
     const add = (g: THREE.BufferGeometry, m: THREE.Material, outline = true) => {
@@ -263,6 +264,16 @@ export class WitchHat implements Accessory {
    * 地面から DRAPE_HEIGHT より高い所は垂らさない（上側のつばは元の形）
    */
   private drapeBrim(a: Float32Array): void {
+    // 上面（円錐の側。寝転がると地面を向く）は地面まで、下面はつばの厚みだけ上で止める
+    // （同じ高さに重なるとちらつく）
+    this.drape(a, (j) => (j <= BRIM_TOP_LAST || j === BRIM_PROFILE - 1 ? DRAPE_CLEAR : DRAPE_CLEAR + DRAPE_THICK), BRIM_PROFILE);
+  }
+
+  /**
+   * つばを垂らすのと同じ動かし方で、点の列 a を地面の側へ寄せる。止める高さは floor(点の番号 % period)（地面からの高さ）。
+   * 帯・リボンにも使う（つばだけ垂らすと、垂れたつばが円錐の付け根の帯とリボンを越えて、頭の側へ突き抜けて見える）
+   */
+  private drape(a: Float32Array, floorOf: (j: number) => number, period = 1): void {
     const e = this.object.matrix.elements;
     // 帽子の座標で動かす向き：ワールドの高さが一番速く下がる向き
     const gx = e[1], gy = e[5], gz = e[9];
@@ -271,10 +282,7 @@ export class WitchHat implements Accessory {
     for (let v = 0; v < a.length; v += 3) {
       const x = a[v], y = a[v + 1], z = a[v + 2];
       const r = Math.hypot(x, z);
-      // 上面（円錐の側。寝転がると地面を向く）は地面まで、下面はつばの厚みだけ上で止める
-      // （同じ高さに重なるとちらつく）
-      const j = (v / 3) % BRIM_PROFILE;
-      const floor = j <= BRIM_TOP_LAST || j === BRIM_PROFILE - 1 ? DRAPE_CLEAR : DRAPE_CLEAR + DRAPE_THICK;
+      const floor = floorOf((v / 3) % period);
       const h = gx * x + gy * y + gz * z + e[13] - GROUND_BRIM - floor;
       if (h >= DRAPE_HEIGHT) continue;
       // 外ほど、低いほどよく垂れる（縁の低い所はちょうど止める高さまで）。
@@ -550,11 +558,20 @@ export class WitchHat implements Accessory {
           part.apply((t) => this.pushAt(t), fold, fold ? (a) => {
             grid?.pushOut(a, BODY_CLEAR);
             this.keepAboveBrim(a, layer);
+            // 円錐と帯もつばと一緒に垂らす（つばより地面の側で止める）。垂らしたつばを越えると、
+            // 頭の側から円錐の布の縁が白っぽい線として見える
+            this.drape(a, () => DRAPE_UNDER);
           } : undefined);
         });
         // 折れているときは円錐の表面について行く。普段は元の形のまま、円錐が太った分だけ外へ
         const shift = this.bowDir.clone().multiplyScalar(this.pushAt(0.08) * 0.98);
-        for (const f of this.bowFollow) f.apply(fold !== null, shift);
+        // 帯と同じく、つばの円錐の側に保ち、つばと一緒に垂らす（帽子が逆さまに押しつぶされたときも、つばを突き抜けない）
+        for (const f of this.bowFollow) {
+          f.apply(fold !== null, shift, fold ? (a) => {
+            this.keepAboveBrim(a, FOLD_LAYER);
+            this.drape(a, () => DRAPE_UNDER);
+          } : undefined);
+        }
         // つば：折れているときは頭（髪）にめり込む所を外へ押し出す。普段は元の形
         if (this.brimGeometry) {
           const p = this.brimGeometry.getAttribute('position') as THREE.BufferAttribute;
@@ -704,6 +721,8 @@ const BRIM_TOP_LAST = 4;
 /** 垂らしたつばを止める高さ：上面は地面から DRAPE_CLEAR、下面はさらに DRAPE_THICK 上（ワールド） */
 const DRAPE_CLEAR = 0.002;
 const DRAPE_THICK = 0.012;
+/** 垂らしたつばと一緒に寄せる円錐・帯・リボンを止める高さ（ワールド。つばの上面より地面の側） */
+const DRAPE_UNDER = -0.001;
 /** 同じく、地面からこの高さ（ワールド）より低い所だけ垂らす */
 const DRAPE_HEIGHT = 0.6;
 
@@ -911,8 +930,8 @@ class Follow {
     }
   }
 
-  /** follow なら円錐の頂点について行く。そうでなければ元の形を shift だけずらす */
-  apply(follow: boolean, shift: THREE.Vector3): void {
+  /** follow なら円錐の頂点について行く。そうでなければ元の形を shift だけずらす。adjust：動かした後、法線を求める前に手を加える */
+  apply(follow: boolean, shift: THREE.Vector3, adjust?: (a: Float32Array) => void): void {
     const p = this.geometry.getAttribute('position') as THREE.BufferAttribute;
     const a = p.array as Float32Array;
     const rest = this.target.rest, cur = this.target.current;
@@ -923,6 +942,7 @@ class Follow {
         a[3 * v + c] = this.base[3 * v + c] + (follow ? cur[j + c] - rest[j + c] : s[c]);
       }
     }
+    adjust?.(a);
     p.needsUpdate = true;
     if (follow) this.geometry.computeVertexNormals();
     else {
