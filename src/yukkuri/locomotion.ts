@@ -142,6 +142,10 @@ const ROLL_SPEED = 1.8;
  */
 const LONG_BODY = 1.4;
 const RISE_SPEED = 1.2;
+/** 身ぶり（体操など）の姿勢を保つ強さ（小さいほど遅れてなめらかに追う） */
+const GESTURE_POSTURE = 0.25;
+/** 身ぶりで背骨を縦に曲げている間の、形に戻る強さの下限 */
+const GESTURE_STIFFNESS = 0.6;
 /** 起き上がり完了とみなす傾き (rad) */
 const RECOVERED = (10 * Math.PI) / 180;
 
@@ -178,6 +182,13 @@ export class Locomotion {
    * release() で動き出す
    */
   private holding = false;
+  /**
+   * 立って止まっている間の身ぶりの指令（体操など）。null でいつもの立ち姿。
+   *   orientation … 体の姿勢（向き・傾き）。squash … 縦の伸び（1 = そのまま、>1 で伸びる）
+   *   arch … 背骨を縦に曲げる角度（rad。+ で後ろ、- で前を持ち上げる。省くと 0）
+   * 移動中・寝転がっている間は使わない。身ぶりの間は転倒とみなして起き直さない
+   */
+  gesture: { orientation: Quaternion; squash: number; arch?: number } | null = null;
   /** 動けない間に指示された行き先がある（target に入っている） */
   deferred = false;
   private state: State = 'idle';
@@ -240,6 +251,8 @@ export class Locomotion {
   private crawlTurn = 0;
   private crawlYaw0 = 0;
   private sideBend = 0;
+  /** 縦への曲げ（身ぶりで後ろを持ち上げるときだけ） */
+  private arch = 0;
   private apexY = 0;
   private standY = 0;
   private readonly _v = new Vector3();
@@ -330,7 +343,7 @@ export class Locomotion {
   }
 
   /** 前後の長さが、高さ・横幅の大きい方の LONG_BODY 倍より長い体型か（静止形状で測る） */
-  private isLongBody(): boolean {
+  isLongBody(): boolean {
     const r = this.body.rest;
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (let i = 0; i < r.length; i += 3) {
@@ -424,18 +437,21 @@ export class Locomotion {
     this.stretch = 1;
     this.bend = 0;
     this.sideBend = 0;
+    this.arch = 0;
     this.lean = 0;
     const act = this.body.actuation;
     act.squash = 1;
     act.stretch = 1;
     act.bend = 0;
     act.sideBend = 0;
+    act.arch = 0;
     act.lean = 0;
     act.yaw = null;
     act.anchor = null;
     act.pivot = null;
     act.slideFriction = null;
     act.uprightMin = null;
+    act.stiffnessMin = null;
     act.stiffnessMode = 'normal';
     act.orientation = null;
     this.rolling = false;
@@ -465,10 +481,12 @@ export class Locomotion {
     let stretchGoal = 1;
     let bendGoal = 0;
     let sideGoal = 0;
+    let archGoal = 0;
     act.slideFriction = null;
     act.anchor = null;
     act.pivot = null;
     act.uprightMin = null;
+    act.stiffnessMin = null;
     act.orientation = null;
     if (this.hasTarget) {
       // 向きを変えるのは決まった瞬間だけ（常に回し続けると機械的で、宙に浮いて見える）
@@ -490,7 +508,7 @@ export class Locomotion {
     const tilt = tiltOf(b);
     // （自分から横になる・起き上がる途中は除く）
     const selfLying = this.state === 'lieDown' || this.state === 'lying' || this.state === 'getUp';
-    if (this.state !== 'recover' && this.state !== 'air' && !selfLying && tilt > FALLEN) this.go('recover');
+    if (this.state !== 'recover' && this.state !== 'air' && !selfLying && !this.gesture && tilt > FALLEN) this.go('recover');
     let leanRate = 6; // 前傾の追従の速さ (1/s)
 
     // 立ち姿勢の重心の高さ（跳躍の基準）。止まっている間だけ更新する
@@ -558,6 +576,16 @@ export class Locomotion {
         // 向きを変えてから動くのではなく、すぐに動き出して進みながら向きを変える
         if (needsMove) this.go(this.moveState());
         else if (this.hasTarget) this.arrive();
+        else if (this.gesture) {
+          // 身ぶり：指令の姿勢へなめらかに寄せ、縦に伸び縮みする
+          act.orientation = this.gesture.orientation;
+          act.uprightMin = GESTURE_POSTURE;
+          squashGoal = this.gesture.squash;
+          archGoal = this.gesture.arch ?? 0;
+          // 大きく曲げるときは、やわらかい体型でも曲げた形を保てるように形に戻る強さを上げる
+          if (archGoal !== 0) act.stiffnessMin = GESTURE_STIFFNESS;
+          rate = 6;
+        }
         break;
       }
       case 'crouch': {
@@ -681,11 +709,13 @@ export class Locomotion {
     this.stretch += (stretchGoal - this.stretch) * s;
     this.bend += (bendGoal - this.bend) * s;
     this.sideBend += (sideGoal - this.sideBend) * s;
+    this.arch += (archGoal - this.arch) * s;
     this.lean += (leanGoal - this.lean) * Math.min(1, dt * leanRate);
     act.squash = this.squash;
     act.stretch = this.stretch;
     act.bend = this.bend;
     act.sideBend = this.sideBend;
+    act.arch = this.arch;
     act.lean = this.lean;
   }
 

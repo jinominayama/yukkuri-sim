@@ -147,6 +147,13 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   // うんうん：体の後ろから餡子を絞り出す。出したものは「片付ける」まで残る
   const poo = gui.addFolder('うんうん');
   poo.add({ f: () => y.dropping.start() }, 'f').name('うんうんする');
+  // うんうんたいそう：歌に合わせて揺れる・伸びる・ひねる・反ってから、うんうんを出す。
+  // 最後に出すときの体勢（デバッグ用）：ランダム・仰向け（後ろへ反る）・腹ばい（お尻を突き上げる）
+  const exerciseOpts = { pose: 'random' };
+  noLock(poo.add(exerciseOpts, 'pose', { ランダム: 'random', 仰向け: 'supine', 腹ばい: 'prone' }).name('たいそうの体勢'));
+  poo.add({
+    f: () => y.exercise.start(exerciseOpts.pose === 'random' ? undefined : exerciseOpts.pose === 'prone'),
+  }, 'f').name('うんうんたいそう');
   poo.add({ f: () => y.dropping.clear() }, 'f').name('片付ける');
 
   // ぺにぺに：顔の正面の下に生える円錐

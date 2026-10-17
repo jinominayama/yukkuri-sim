@@ -12,6 +12,7 @@ import { Outfit } from '../character/Outfit';
 import { Feeding } from './feeding';
 import { Dropping } from './dropping';
 import { Peni } from './peni';
+import { Exercise } from './exercise';
 import { TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
@@ -64,6 +65,8 @@ export class Yukkuri {
   readonly feeding: Feeding;
   /** うんうん（出したものは dropping.object をシーンに置いて表示する） */
   readonly dropping: Dropping;
+  /** うんうんたいそう（歌に合わせて体を動かし、最後にうんうんを出す） */
+  readonly exercise: Exercise;
   /** ぺにぺに（顔の正面の下に生える円錐） */
   readonly peni: Peni;
   /** まわりに出す文字（texts.object をシーンに置いて表示する） */
@@ -115,6 +118,7 @@ export class Yukkuri {
     this.locomotion = new Locomotion(this.body, this.move);
     this.feeding = new Feeding(this);
     this.dropping = new Dropping(this);
+    this.exercise = new Exercise(this);
     this.peni = new Peni(this);
     this.peni.usePreset(this.presetId);
     this.root.add(this.peni.object);
@@ -241,6 +245,7 @@ export class Yukkuri {
     this.body.volumeScale = 1 + this.life.breath * Math.sin(this.time * Math.PI * 2 * this.life.breathRate);
     // 寝返りで横へずれてから起き上がる：寝返りが終わったら、まだ塊に近ければもう一度、離れていれば起き上がる
     if (this.rollingAside && this.locomotion.resting) this.getUp();
+    this.exercise.update(dt); // 体操の身ぶりを移動の処理より先に指示する
     this.locomotion.update(dt, this.physics.gravity);
     this.feeding.update(dt);
     this.dropping.update(dt);

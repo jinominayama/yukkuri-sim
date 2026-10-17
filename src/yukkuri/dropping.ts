@@ -21,6 +21,8 @@ type Phase = 'none' | 'wait' | 'push' | 'relief';
 
 /** 出口：背中側（顔の正面から π）の、床から体の高さのこの比の所 */
 const EXIT_HEIGHT = 0.26;
+/** 前から出すとき（うんうんたいそうで後ろへ反ったとき）の出口：体の正面の、床から体の高さのこの割合（口よりずっと下） */
+const FRONT_EXIT_HEIGHT = 0.12;
 /**
  * 仰向けの出口：背中側の ±この角度・床から（寝転ぶ前の）体の高さのこの比以下の範囲で、
  * 今の高さが寝転んだ体の高さのこの比に一番近い所
@@ -46,6 +48,8 @@ const PUSH_TREMBLE = 0.012;
 /** すっきりー：前へ跳ねる速さ（m/s、前・上）と、その後の時間（秒） */
 const HOP_FORWARD = 1.0;
 const HOP_UP = 2.4;
+/** 前に出したときに、すっきりーで後ろへ跳ねる強さ（前へ跳ねる HOP_FORWARD と同じ単位） */
+const HOP_BACK = 0.6;
 const RELIEF_TIME = 3.2;
 /** 体勢が落ち着くのを待つ上限（秒） */
 const WAIT_MAX = 8;
@@ -108,10 +112,17 @@ export class Dropping {
   private settling: Pile[] = [];
   private phase: Phase = 'none';
   private t = 0;
+  /** 今回は体の前から出す（出し終わっても前へ跳ねない） */
+  private front = false;
 
   constructor(private readonly y: Yukkuri) {
     this.material = createAccessoryMaterial(y.bodyMaterial, ANKO, { rim: 0.25 });
     this.outline = createAccessoryOutlineMaterial(y.outlineMaterial);
+  }
+
+  /** 出し始めるのを待っているか、出している最中か（すっきりーの前まで） */
+  get pushing(): boolean {
+    return this.phase === 'wait' || this.phase === 'push';
   }
 
   /** 出している最中か（すっきりーが終わるまで） */
@@ -119,15 +130,19 @@ export class Dropping {
     return this.phase !== 'none';
   }
 
-  /** 出し始める（腹ばい・仰向けのままでもよい）。食べている・出している最中なら何もしない */
-  start(): boolean {
+  /**
+   * 出し始める（腹ばい・仰向けのままでもよい）。食べている・出している最中なら何もしない。
+   * front：いつもの背中側でなく、体の前の下から前へ出す（うんうんたいそうで後ろへ反ったとき）
+   */
+  start(opts: { front?: boolean } = {}): boolean {
     const y = this.y;
-    if (this.active || y.feeding.active) return false;
+    if (this.active || y.feeding.active || y.exercise.active) return false;
     // 移動はやめて、出し終わるまで保留する。体勢が変わっている途中（起き上がる・倒れ込む・寝返る・跳ねるなど）なら、
     // 立って止まるか寝転がり終えるまで待ってから出す（途中の向きで出口を決めると、横や前に出てしまう）
     y.locomotion.hold();
     this.phase = 'wait';
     this.t = 0;
+    this.front = opts.front ?? false;
     if (this.settled()) this.begin();
     return true;
   }
@@ -142,12 +157,12 @@ export class Dropping {
   private begin(): void {
     const y = this.y;
     const pos = new THREE.Vector3(), nrm = new THREE.Vector3();
-    if (!y.outfit.surfacePoint(Math.PI, EXIT_HEIGHT, pos, nrm)) {
+    if (!(this.front ? y.outfit.surfacePoint(0, FRONT_EXIT_HEIGHT, pos, nrm) : y.outfit.surfacePoint(Math.PI, EXIT_HEIGHT, pos, nrm))) {
       this.finish();
       return;
     }
     // 仰向けでは背中が地面に着き、いつもの出口は地面すれすれになる。背中の下側の範囲から、地面から高い所を選び直す
-    if (y.locomotion.lyingPose === 'supine') {
+    if (!this.front && y.locomotion.lyingPose === 'supine') {
       // 体の高さは寝転んだ今の高さ（体の一番高い所）
       const p = y.bodyMesh.geometry.getAttribute('position').array as Float32Array;
       let top = 0;
@@ -227,8 +242,12 @@ export class Dropping {
     y.tremble = 0;
     showFace(y, FACE_RELIEF, AT_LEAST_RELIEF);
     const { facing } = faceFrame(y);
-    // 立っていれば一歩前へ跳ねる（寝転がっているときは跳ねない）
-    if (!y.locomotion.isLying) y.impulse(facing.x * HOP_FORWARD, HOP_UP, facing.z * HOP_FORWARD);
+    // 立っていれば一歩前へ跳ねる（寝転がっているときは跳ねない）。
+    // 前に出したときは、前へ跳ねると塊に乗ってしまうので、後ろへ小さく跳ねて塊から離れる
+    if (!y.locomotion.isLying) {
+      const step = this.front ? -HOP_BACK : HOP_FORWARD;
+      y.impulse(facing.x * step, HOP_UP, facing.z * step);
+    }
     const R = y.shape.radius;
     const pos = new THREE.Vector3(y.center.x, y.center.y + y.height * 0.5 + R * 0.25, y.center.z).addScaledVector(facing, R * 0.9);
     y.texts.say('すっきりー', pos, R * 0.42, RELIEF_TIME, new THREE.Vector3(facing.x * R * 0.25, R * 0.12, facing.z * R * 0.25));

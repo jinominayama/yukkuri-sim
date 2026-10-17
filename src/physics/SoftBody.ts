@@ -97,6 +97,12 @@ export class SoftBody {
      * ずらすのではなく回すので、顔（両目）がそろって新しい向きを向く。0 でまっすぐ
      */
     sideBend: 0,
+    /**
+     * 縦への曲げ（rad）。背骨（前後の軸）を縦の弧に曲げる。0 でまっすぐ。
+     *   + … 後ろを持ち上げる。前 25% はまっすぐのまま胴の中ほどで曲がり、後ろ 25% は丸ごとこの角度だけ上を向く（お尻を突き上げる）
+     *   - … 前を持ち上げる。後ろ 25% はまっすぐのまま、前 25% が丸ごと上を向く（頭の側を起こして反り返る）
+     */
+    arch: 0,
     /** 前方への傾き (rad)。前方は体のローカル +Z */
     lean: 0,
     /** 向きたい方向 (rad, Y軸まわり)。null なら今の向きを保つ */
@@ -115,6 +121,8 @@ export class SoftBody {
     pivot: null as 'front' | 'rear' | null,
     /** 姿勢を保つ強さの下限（一時的に踏ん張って姿勢を保つとき。null で通常） */
     uprightMin: null as number | null,
+    /** 形に戻る強さの下限（体を大きく曲げた形を保つときなど。null で通常） */
+    stiffnessMin: null as number | null,
     /** 形に戻る強さをどの状況の値にするか */
     stiffnessMode: 'normal' as 'normal' | 'hop' | 'prone' | 'supine',
     /** 目標の姿勢（回転）。指定すると yaw・lean の代わりにこの姿勢へ近づける（横になる・転がる等） */
@@ -268,11 +276,11 @@ export class SoftBody {
     const h = dt / sub;
     // 1/60 秒あたりの値を部分ステップあたりに換算
     const mode = this.actuation.stiffnessMode;
-    const stiffness =
+    const stiffness = Math.max(this.actuation.stiffnessMin ?? 0,
       mode === 'hop' ? p.hopStiffness
         : mode === 'prone' ? p.proneStiffness
           : mode === 'supine' ? p.supineStiffness
-            : p.shapeStiffness;
+            : p.shapeStiffness);
     const shapeK = 1 - Math.pow(1 - stiffness, dt * 60 / sub);
     const upright = Math.max(p.upright, this.actuation.uprightMin ?? 0);
     const uprightK = 1 - Math.pow(1 - upright, dt * 60 / sub);
@@ -332,6 +340,7 @@ export class SoftBody {
     const H = Math.max(this.restYMax - y0, 1e-6);
     const bend = act.bend;
     const side = act.sideBend;
+    const arch = act.arch;
 
     let gzMin = Infinity, gzMax = -Infinity;
     for (let i = 0; i < n * 3; i += 3) {
@@ -371,6 +380,60 @@ export class SoftBody {
       }
     }
 
+    // 縦への曲げ：背骨を前端から後ろへたどって縦の弧にし、各断面を背骨の向きに合わせて回す
+    if (Math.abs(arch) > 1e-5) {
+      let zMin = Infinity, zMax = -Infinity;
+      for (let i = 0; i < n * 3; i += 3) {
+        zMin = Math.min(zMin, g[i + 2]);
+        zMax = Math.max(zMax, g[i + 2]);
+      }
+      const D = Math.max(zMax - zMin, 1e-6);
+      const N = SPINE_SAMPLES;
+      // 背骨を、地面に付けたままにする端（+ なら前端、- なら後端）から反対の端へたどる。
+      // dir：たどる向き（前後の軸の向き。前端からなら -1）。sx_ に高さ、sz_ に前後の位置、sa に上向きの角度を入れる
+      const dir = arch > 0 ? -1 : 1;
+      const amount = Math.abs(arch);
+      const sy_ = this.spineX, sz_ = this.spineZ, sa = this.spineA;
+      sy_[0] = 0; sz_[0] = dir < 0 ? zMax : zMin; sa[0] = 0;
+      for (let j = 1; j <= N; j++) {
+        sa[j] = amount * smoothstep(0.25, 0.75, j / N);
+        const am = (sa[j - 1] + sa[j]) * 0.5;
+        sy_[j] = sy_[j - 1] + (D / N) * Math.sin(am);
+        sz_[j] = sz_[j - 1] + dir * (D / N) * Math.cos(am);
+      }
+      for (let i = 0; i < n * 3; i += 3) {
+        const f = ((dir < 0 ? zMax - g[i + 2] : g[i + 2] - zMin) / D) * N;
+        const j = Math.min(Math.max(Math.floor(f), 0), N - 1);
+        const w = f - j;
+        const py = sy_[j] + (sy_[j + 1] - sy_[j]) * w;
+        const pz = sz_[j] + (sz_[j + 1] - sz_[j]) * w;
+        const a = sa[j] + (sa[j + 1] - sa[j]) * w;
+        // 背骨上の点から、背骨に直交する向き（上向きを、たどる向きと反対へ a だけ倒した向き）へ元の高さだけ離す
+        const ly = g[i + 1];
+        g[i + 1] = py + ly * Math.cos(a);
+        g[i + 2] = pz - dir * ly * Math.sin(a);
+      }
+      // 曲げた形は全体として少し傾いて見える。この傾きを残すと、体の向き（今の形を元の形に重ねる回転）が
+      // その分だけ傾いたと読まれ、その上にまた曲げた形を置くので、前へ回り続けてしまう。
+      // 元の形にいちばん重なる左右の軸まわりの傾きを求めて戻す（曲げは縦と前後の面の中だけなので 2 次元で求まる）
+      let my = 0, mz = 0;
+      for (let i = 0; i < n * 3; i += 3) { my += g[i + 1]; mz += g[i + 2]; }
+      my /= n; mz /= n;
+      let sc = 0, ss = 0;
+      for (let i = 0; i < n * 3; i += 3) {
+        const gy = g[i + 1] - my, gz = g[i + 2] - mz, ry = rest[i + 1], rz = rest[i + 2];
+        sc += gy * ry + gz * rz;
+        ss += gz * ry - gy * rz;
+      }
+      const tilt = Math.atan2(ss, sc); // 元の形を左右の軸まわりに tilt 回すと曲げた形に重なる
+      const ct = Math.cos(tilt), st2 = Math.sin(tilt);
+      for (let i = 0; i < n * 3; i += 3) {
+        const gy = g[i + 1] - my, gz = g[i + 2] - mz;
+        g[i + 1] = my + gy * ct + gz * st2;
+        g[i + 2] = mz - gy * st2 + gz * ct;
+      }
+    }
+
     let cx = 0, cy = 0, cz = 0;
     for (let i = 0; i < n * 3; i += 3) {
       cx += g[i]; cy += g[i + 1]; cz += g[i + 2];
@@ -390,7 +453,7 @@ export class SoftBody {
     this.goalFront.set(g[fi], g[fi + 1], g[fi + 2]);
     this.goalRear.set(g[ri], g[ri + 1], g[ri + 2]);
 
-    const identity = Math.abs(sy - 1) + Math.abs(st - 1) + Math.abs(bend) + Math.abs(side) < 1e-4;
+    const identity = Math.abs(sy - 1) + Math.abs(st - 1) + Math.abs(bend) + Math.abs(side) + Math.abs(arch) < 1e-4;
     if (identity) {
       edgeTarget.set(edgeLen);
       return;
