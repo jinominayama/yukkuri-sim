@@ -7,6 +7,7 @@ import { LockManager } from './locks';
 import { STYLES } from '../face/styles';
 import { createFacePanel } from './facePanel';
 import { CHARACTERS } from '../character';
+import { MORU_WAG_MAX } from '../yukkuri/moru';
 import { allPresets, findPreset, isOverridden, resetPreset, saveLastPresetId, savePreset, USER_PRESET_ID } from '../yukkuri/presets';
 
 export interface ViewSettings {
@@ -100,6 +101,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
         y.outfit.copyFitTo(USER_PRESET_ID); // 帽子・髪の厚み・三つ編みの長さも一緒に写す
         y.peni.copyTo(USER_PRESET_ID); // ぺにぺにの設定も
         y.dropping.copyExitTo(USER_PRESET_ID); // うんうんの出る位置も
+        y.moru.copyFitTo(USER_PRESET_ID); // もるんもるんの揺れ幅・角度も
       }
       showInfo(presetState.id, ok ? `現在の値（${from}）をユーザー設定に上書きしました。` : '保存できませんでした（保存領域が使えません）。');
     });
@@ -115,6 +117,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       y.outfit.resetFit();
       y.peni.reset();
       y.dropping.resetExit();
+      y.moru.resetFit();
       applyPreset(presetState.id);
     });
   showInfo(y.presetId);
@@ -168,6 +171,15 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   vomit.add({ f: () => y.vomit.start() }, 'f').name('吐餡する');
   noLock(vomit.add(y.vomit.params, 'face', { ランダム: 'random', 白目: 'shock', 泣く: 'cry' }).name('顔').onChange(saveVomit));
   vomit.add({ f: () => y.vomit.clear() }, 'f').name('片付ける');
+
+  // もるんもるん：お尻を突き上げて左右に振る。振っている間に地面をクリックすると、そのまま這って行く
+  const moru = doGroup.addFolder('もるんもるん');
+  moru.add({ f: () => y.moru.toggle() }, 'f').name('振る／やめる');
+  noLock(moru.add(y.moru.params, 'face', { ランダム: 'random', ご機嫌: 'happy', 必死: 'desperate', 泣く: 'cry' }).name('顔')
+    .onChange(() => { y.moru.save(); y.moru.refreshFace(); }));
+  // 左右の揺れ幅と尻を上げる角度は体型ごとに保存する（体型を切り替えるとその体型の値になるので、ロックは付けない）
+  noLock(moru.add(y.moru.params, 'wag', 0.05, MORU_WAG_MAX, 0.01).name('左右の揺れ幅').onChange(() => y.moru.setFit()));
+  noLock(moru.add(y.moru.params, 'lift', 15, 85, 1).name('尻を上げる角度(°)').onChange(() => y.moru.setFit()));
 
   // ---- 見た目 ----
   const looks = gui.addFolder('見た目');
@@ -267,7 +279,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   const tune = gui.addFolder('動きの調整');
 
   const mv = tune.addFolder('移動');
-  mv.add(y.move, 'mode', { '跳ねる': 'hop', '這う': 'crawl' }).name('移動方法');
+  mv.add(y.move, 'mode', { '跳ねる': 'hop', '這う': 'crawl', 'もるんもるん': 'moru' }).name('移動方法');
   mv.add(y.move, 'canHop').name('跳ねられる体');
   mv.add(y.move, 'wander').name('自分でうろつく');
   mv.add(y.move, 'hopHeight', MIN_HOP_HEIGHT, 0.6, 0.01).name('跳ぶ高さ');

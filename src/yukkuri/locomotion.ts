@@ -1,9 +1,10 @@
 import { Quaternion, Vector3 } from 'three';
 import type { SoftBody } from '../physics/SoftBody';
 
-export type MoveMode = 'hop' | 'crawl';
+export type MoveMode = 'hop' | 'crawl' | 'moru';
 
 export interface LocomotionParams {
+  /** 移動方法：跳ねる・這う・もるんもるん（お尻を突き上げて左右に振りながら這う） */
   mode: MoveMode;
   /** 跳ねて移動できるか（できない体型は mode に関わらず這う） */
   canHop: boolean;
@@ -62,7 +63,7 @@ export const DEFAULT_LOCOMOTION: LocomotionParams = {
   wanderRadius: 3,
 };
 
-type State = 'idle' | 'crouch' | 'air' | 'land' | 'crawl' | 'recover' | 'lieDown' | 'lying' | 'getUp';
+type State = 'idle' | 'crouch' | 'air' | 'land' | 'crawl' | 'moru' | 'recover' | 'lieDown' | 'lying' | 'getUp';
 
 /**
  * 横になる体勢。体の部位は「前面の下部がお腹、底があんよ」。
@@ -116,6 +117,7 @@ const STATE_LABEL: Record<State, string> = {
   air: '跳躍中',
   land: '着地',
   crawl: '這う',
+  moru: 'もるんもるん（移動）',
   recover: '体勢を立て直す',
   lieDown: '横になる',
   lying: '横になっている',
@@ -146,6 +148,37 @@ const RISE_SPEED = 1.2;
 const GESTURE_POSTURE = 0.25;
 /** 身ぶりで背骨を縦に曲げている間の、形に戻る強さの下限 */
 const GESTURE_STIFFNESS = 0.6;
+/**
+ * もるんもるん：顔を床に付けるほど前へ倒れてお尻を突き上げ、左右に振る。
+ * 前へ倒す角度は Locomotion.moruLift（度）。前後に長い体型は体ごと大きく傾けると棒のように斜めに立つので、
+ * 傾きは小さくして背骨を縦に曲げる（うんうんたいそうの腹ばいと同じ作り）。その傾き（rad）と曲げ（rad）は、
+ * 角度が MORU_LIFT_BASE のときの値で、角度に比例させる
+ */
+const MORU_LIFT_BASE = 60;
+const MORU_PITCH_LONG = 0.55;
+const MORU_ARCH_LONG = 1.5;
+/** お尻を振る 1 往復の時間（秒）。振る量は Locomotion.moruWag */
+const MORU_PERIOD = 1.0;
+/** 前へ倒れきるまで（秒。姿勢は強く保つので、指令をこの時間でなめらかに倒す） */
+const MORU_TIP = 0.8;
+/** 倒れ始めてから振り始めるまで（秒）と、振り幅が揃うまで（秒） */
+const MORU_WAG_DELAY = 0.7;
+const MORU_WAG_RAMP = 0.8;
+/** もるんもるんで這う速さ（m/s。振りの真ん中で一番速く、振り切った所で遅い）と、向きを変える速さの比 */
+const MORU_SPEED = 0.16;
+const MORU_TURN = 0.5;
+/**
+ * もるんもるんの間の、形に戻る強さの下限。やわらかい体型（ひよこ・扁平・なすび）は、お尻を振った反動で頭ごと横へ 4 cm ほど揺れる。
+ * 0.8 で全体型 1 cm 以内（前後に長い体型の背骨の曲げを保つ GESTURE_STIFFNESS より強い）
+ */
+const MORU_STIFFNESS = 0.8;
+/** もるんもるんで這うとき、横向きの速さを消す速さ（1/秒） */
+const MORU_SIDE_DAMP = 12;
+/**
+ * もるんもるんの姿勢を保つ強さ。お尻だけをずらした形は、全体としては少し横を向いたように読み取られるので、
+ * 弱く保つとその分だけ体ごと回ってしまう（お尻を振るたびに頭が逆へ振れて、転がるように見える）。強く保って体の向きは動かさない
+ */
+const MORU_POSTURE = 1;
 /** 起き上がってから、倒れても寝転ばず立て直す猶予（秒） */
 const RISE_GRACE = 1.5;
 /** 前後に長い体型が倒れたとき、長い軸のまわりにこれ（rad）より転がっていれば、横に転がりきって仰向けになる */
@@ -193,6 +226,21 @@ export class Locomotion {
    * 移動中・寝転がっている間は使わない。身ぶりの間は転倒とみなして起き直さない
    */
   gesture: { orientation: Quaternion; squash: number; arch?: number } | null = null;
+  /**
+   * もるんもるん：立って止まっている間、お尻を突き上げて左右に振る。移動するときも、そのままもるんもるんで這う
+   * （移動方法が mode = 'moru' のときは、移動している間だけもるんもるんになる）
+   */
+  moru = false;
+  /**
+   * もるんもるんでお尻を横へ振る量（片側。体の前後の長さに対する比）。お尻だけをずらし、体の向き・頭は振らない。
+   * 調整パネルの「もるんもるん」→「左右の揺れ幅」（Moru が設定を渡す）
+   */
+  moruWag = 0.35;
+  /** もるんもるんで尻を上げる角度（度。前へ倒す角度）。調整パネルの「もるんもるん」→「尻を上げる角度」 */
+  moruLift = 60;
+  /** もるんもるんの振りの、振り切った回数（振り切るたびに 1 増える）と、その向き（+1 で体の右へ振った） */
+  wagBeats = 0;
+  wagSide = 1;
   /** 動けない間に指示された行き先がある（target に入っている） */
   deferred = false;
   private state: State = 'idle';
@@ -264,6 +312,14 @@ export class Locomotion {
   private readonly _v = new Vector3();
   /** 這う動作の今回の伸び縮みを始めた位置（1回で進んだ距離を測る） */
   private readonly cycleFrom = new Vector3();
+  /** もるんもるんの姿勢になってからの時間・振りの時計・向き（その場で振るときの基準）と、姿勢の指令 */
+  private moruT = 0;
+  /** 前のステップでもるんもるんの姿勢だったか（抜けたときに、倒れたとみなさず立て直すため） */
+  private wasMoru = false;
+  private wagClock = 0;
+  private moruYaw = 0;
+  private readonly moruCmd = new Quaternion();
+  private readonly _mq = new Quaternion();
 
   constructor(private readonly body: SoftBody, readonly params: LocomotionParams) {
     this.prevCenter.copy(body.center);
@@ -275,7 +331,13 @@ export class Locomotion {
       const pose = this.lieSign > 0 ? '腹ばい' : '仰向け';
       return this.state === 'lying' ? pose : `${pose}になる`;
     }
+    if (this.state === 'idle' && this.moru && !this.gesture) return 'もるんもるん';
     return STATE_LABEL[this.state];
+  }
+
+  /** もるんもるんの姿勢をとっているか（その場で振っている・もるんもるんで這っている） */
+  get inMoruPose(): boolean {
+    return this.state === 'moru' || (this.state === 'idle' && this.moru && !this.gesture);
   }
 
   /**
@@ -492,6 +554,7 @@ export class Locomotion {
     act.stretch = 1;
     act.bend = 0;
     act.sideBend = 0;
+    act.tailSway = 0;
     act.arch = 0;
     act.lean = 0;
     act.yaw = null;
@@ -536,6 +599,7 @@ export class Locomotion {
     act.uprightMin = null;
     act.stiffnessMin = null;
     act.orientation = null;
+    act.tailSway = 0;
     if (this.hasTarget) {
       // 向きを変えるのは決まった瞬間だけ（常に回し続けると機械的で、宙に浮いて見える）
       //   跳ねる … 跳び出した直後に、踏み切りで決めた方向へ素早く体をひねる
@@ -559,7 +623,11 @@ export class Locomotion {
     // 倒れすぎたら、近い方の寝転び（腹ばい・仰向け）へそのまま移る。
     // 起き上がった直後（起き上がりきれずに傾いたまま立った）だけは、寝転びと起き上がりを繰り返さないよう立て直す
     this.riseGrace = Math.max(0, this.riseGrace - dt);
-    if (this.state !== 'recover' && this.state !== 'air' && !selfLying && !this.gesture && tilt > FALLEN) {
+    // もるんもるんをやめた・もるんもるんで這ってきて着いた：大きく傾いたままなので、寝転ばずに立て直す
+    const moruNow = this.inMoruPose;
+    if (this.wasMoru && !moruNow) this.riseGrace = RISE_GRACE;
+    this.wasMoru = moruNow;
+    if (this.state !== 'recover' && this.state !== 'air' && !selfLying && !this.gesture && !this.inMoruPose && tilt > FALLEN) {
       if (this.riseGrace > 0) this.go('recover');
       else this.fallOver();
     }
@@ -569,6 +637,13 @@ export class Locomotion {
     // （連続跳躍中は着地の反動で上下しているので使わない）
     if (this.state === 'idle') {
       this.standY += (b.center.y - this.standY) * Math.min(1, dt * 5);
+    }
+
+    // もるんもるんの姿勢でないときは、振りの時計を戻し、今の向きをその場で振るときの基準にしておく
+    if (!this.inMoruPose) {
+      this.moruT = 0;
+      this.wagClock = 0;
+      this.moruYaw = this.cmdYaw ?? b.yaw;
     }
 
     switch (this.state) {
@@ -640,7 +715,41 @@ export class Locomotion {
           // 大きく曲げるときは、やわらかい体型でも曲げた形を保てるように形に戻る強さを上げる
           if (archGoal !== 0) act.stiffnessMin = GESTURE_STIFFNESS;
           rate = 6;
+        } else if (this.moru) {
+          // その場でもるんもるん：頭の先を支点にして、お尻を左右に振る
+          const g = this.moruPose(dt, this.moruYaw, true);
+          sideGoal = g.side;
+          archGoal = g.arch;
+          rate = 6;
         }
+        break;
+      }
+      case 'moru': {
+        // もるんもるんで這う：お尻を振りながら、振りに合わせて前へずりずり進む。向きは少しずつ目的地へ回す
+        if (!needsMove) {
+          this.arrive();
+          break;
+        }
+        const maxTurn = p.turnSpeed * MORU_TURN * dt;
+        this.cmdYaw = (this.cmdYaw ?? b.yaw) + Math.max(-maxTurn, Math.min(maxTurn, wrapAngle(wantYaw - (this.cmdYaw ?? b.yaw))));
+        act.yaw = this.cmdYaw;
+        const g = this.moruPose(dt, this.cmdYaw, false);
+        sideGoal = g.side;
+        archGoal = g.arch;
+        rate = 6;
+        // 振りの真ん中で一番速く、振り切った所で遅い。目的地が近い（着けるよう 4 割は残す）・横や後ろにあるほど遅い
+        const yawNow = wrapAngle(wantYaw - this.cmdYaw);
+        const speed = MORU_SPEED * g.surge * Math.max(0.4, Math.min(1, dist / 0.3)) * headingFactor(yawNow);
+        // 前向きの速さをそろえる（地面の摩擦と、前へ倒した姿勢を保つ力で、少しずつ押すだけでは後ろへずれていく）。
+        // 床に着いた所は前へだけ滑りやすくする（通常の摩擦だと、押した分がそのまま止められて進まない）。
+        // 「前」は体の向きなので、お尻を振ると左右にぶれて体が横へ滑り、振りと共振して揺れが大きくなっていく。
+        // 横向きの速さは強めに消す（お尻の振りは体の回転なので、重心が横へ動かなくても見える）
+        const mx = Math.sin(this.cmdYaw), mz = Math.cos(this.cmdYaw);
+        const v = b.meanVelocity(this._v);
+        const dv = speed - (v.x * mx + v.z * mz);
+        const lat = (v.x * mz - v.z * mx) * Math.min(1, dt * MORU_SIDE_DAMP);
+        b.addVelocity(mx * dv - mz * lat, 0, mz * dv + mx * lat);
+        act.slideFriction = 0.05;
         break;
       }
       case 'crouch': {
@@ -819,7 +928,45 @@ export class Locomotion {
   }
 
   private moveState(): State {
+    if (this.moru || this.params.mode === 'moru') return 'moru';
     return this.params.mode === 'hop' && this.params.canHop ? 'crouch' : 'crawl';
+  }
+
+  /**
+   * もるんもるんの姿勢：前へ倒れてお尻を突き上げ、お尻の部分だけを左右に振る（体の後ろ側かつ下側を横へずらす。体の向き・頭は動かさない）。
+   * still：その場で振る（頭の先を支点にして、頭の位置を動かさない）。
+   * 返す値：背骨の横曲げ・縦曲げの目標と、今の振りでの進む速さの比（振りの真ん中で 1）
+   */
+  private moruPose(dt: number, yaw: number, still: boolean): { side: number; arch: number; surge: number } {
+    const act = this.body.actuation;
+    this.moruT += dt;
+    const ramp = smooth(Math.min(1, Math.max(0, (this.moruT - MORU_WAG_DELAY) / MORU_WAG_RAMP)));
+    if (ramp > 0) {
+      const before = this.wagClock;
+      this.wagClock += dt;
+      // 振り切った（sin の山・谷を越えた）回数を数える
+      const beat = (t: number) => Math.floor((t - MORU_PERIOD / 4) / (MORU_PERIOD / 2));
+      if (beat(this.wagClock) > beat(before)) {
+        this.wagBeats++;
+        this.wagSide = Math.sin((2 * Math.PI * (this.wagClock - dt * 0.5)) / MORU_PERIOD) > 0 ? 1 : -1;
+      }
+    }
+    const phase = (2 * Math.PI * this.wagClock) / MORU_PERIOD;
+    const wag = this.moruWag * ramp * Math.sin(phase);
+    const long = this.isLongBody();
+    const tip = smooth(Math.min(1, this.moruT / MORU_TIP));
+    const lift = this.moruLift / MORU_LIFT_BASE;
+    const pitch = (long ? MORU_PITCH_LONG * lift : (this.moruLift * Math.PI) / 180) * tip;
+    this._mq.setFromAxisAngle(X_AXIS, pitch);
+    this.moruCmd.setFromAxisAngle(Y_AXIS, yaw).multiply(this._mq);
+    act.orientation = this.moruCmd;
+    act.uprightMin = MORU_POSTURE;
+    act.tailSway = wag;
+    // 形を保つ強さを上げる（やわらかいままだと、お尻を振った反動で頭ごと横へ 2〜4 cm 揺れる）
+    act.stiffnessMin = MORU_STIFFNESS;
+    // 倒れきってから頭の先を支点にする（倒れる途中から留めると、頭が前へ出られず体が後ろへずれる）
+    if (still && this.moruT > MORU_WAG_DELAY) act.pivot = 'front';
+    return { side: 0, arch: (long ? MORU_ARCH_LONG * lift : 0) * tip, surge: 0.35 + 0.65 * Math.abs(Math.cos(phase)) };
   }
 
   /** 這う動作の次の伸び縮みで変える向きを決める */
@@ -835,8 +982,14 @@ export class Locomotion {
   }
 
   private go(s: State): void {
+    const wasMoru = this.inMoruPose;
     this.state = s;
     this.t = 0;
+    if (s === 'moru') {
+      // その場で振っていたなら、その向きのまま這い出す
+      this.cmdYaw = wasMoru ? this.moruYaw : this.body.yaw;
+      if (!wasMoru) this.moruT = 0;
+    }
     if (s === 'crouch') {
       // 跳ぶ前に、今回の跳躍で向ける方向を決める（今の向きから最大 hopTurnMax まで目的地側へ）
       const b = this.body;
@@ -860,6 +1013,8 @@ export class Locomotion {
     if (s === 'idle') {
       this.idleFor = 0;
       this.idleWait = 1 + Math.random() * 3;
+      // もるんもるんで這ってきて、続けてその場で振るなら、今の向きを振る基準にする（姿勢はそのまま）
+      if (wasMoru && this.cmdYaw !== null) this.moruYaw = this.cmdYaw;
     }
   }
 }

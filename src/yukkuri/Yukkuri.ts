@@ -15,6 +15,7 @@ import { Peni } from './peni';
 import { Exercise } from './exercise';
 import { Poke } from './poke';
 import { Vomit } from './vomit';
+import { Moru } from './moru';
 import { TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
@@ -75,6 +76,8 @@ export class Yukkuri {
   readonly exercise: Exercise;
   /** 吐餡（高い所から落ちたときなどに口から餡子を吐く。吐いたものは vomit.object をシーンに置いて表示する） */
   readonly vomit: Vomit;
+  /** もるんもるん（お尻を突き上げて左右に振る。顔と文字を受け持つ。体の動きは locomotion.moru） */
+  readonly moru: Moru;
   /** ぺにぺに（顔の正面の下に生える円錐） */
   readonly peni: Peni;
   /** まわりに出す文字（texts.object をシーンに置いて表示する） */
@@ -133,6 +136,8 @@ export class Yukkuri {
     this.exercise = new Exercise(this);
     this.poking = new Poke(this);
     this.vomit = new Vomit(this);
+    this.moru = new Moru(this);
+    this.moru.usePreset(this.presetId);
     this.peni = new Peni(this);
     this.peni.usePreset(this.presetId);
     this.root.add(this.peni.object);
@@ -174,6 +179,7 @@ export class Yukkuri {
     this.outfit.usePreset(p.id); // 帽子・髪の厚み・三つ編みの長さは体型ごと
     this.peni.usePreset(p.id); // ぺにぺにの設定も体型ごと
     this.dropping.usePreset(p.id); // うんうんの出る位置も体型ごと
+    this.moru.usePreset(p.id); // もるんもるんの揺れ幅も体型ごと
     this.locomotion.reset();
     this.applyShape();
     this.drop(0.02);
@@ -279,6 +285,7 @@ export class Yukkuri {
     this.vomit.update(dt); // 吐くときの身ぶりも移動の処理より先に指示する
     this.exercise.update(dt); // 体操の身ぶりを移動の処理より先に指示する
     this.locomotion.update(dt, this.physics.gravity);
+    this.moru.update(dt); // 振り切った回数は移動の処理が数えるので、その後で
     this.feeding.update(dt);
     this.dropping.update(dt);
     this.peni.step(dt);

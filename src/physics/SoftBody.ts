@@ -98,6 +98,11 @@ export class SoftBody {
      */
     sideBend: 0,
     /**
+     * お尻を横へ振る量（体の前後の長さに対する比。+ でローカル +X 側へ）。体の後ろ側かつ下側（お尻）だけを横へずらし、
+     * 前側と上側（顔・頭・帽子の付く所）は動かさない（もるんもるん）
+     */
+    tailSway: 0,
+    /**
      * 縦への曲げ（rad）。背骨（前後の軸）を縦の弧に曲げる。0 でまっすぐ。
      *   + … 後ろを持ち上げる。前 25% はまっすぐのまま胴の中ほどで曲がり、後ろ 25% は丸ごとこの角度だけ上を向く（お尻を突き上げる）
      *   - … 前を持ち上げる。後ろ 25% はまっすぐのまま、前 25% が丸ごと上を向く（頭の側を起こして反り返る）
@@ -340,6 +345,7 @@ export class SoftBody {
     const H = Math.max(this.restYMax - y0, 1e-6);
     const bend = act.bend;
     const side = act.sideBend;
+    const tail = act.tailSway;
     const arch = act.arch;
 
     let gzMin = Infinity, gzMax = -Infinity;
@@ -377,6 +383,21 @@ export class SoftBody {
         const lx = g[i];
         g[i] = px + lx * Math.cos(a);
         g[i + 2] = pz - lx * Math.sin(a);
+      }
+    }
+
+    // お尻を横へ振る：後ろ側ほど、下側ほど大きく横へずらす（顔・頭・帽子の付く所は動かさない）。
+    // 重みは静止形状で決める（縮んだり曲げたりしても、振る範囲が揺れないように）
+    if (Math.abs(tail) > 1e-5) {
+      let zMin = Infinity, zMax = -Infinity;
+      for (let i = 2; i < n * 3; i += 3) {
+        zMin = Math.min(zMin, rest[i]); zMax = Math.max(zMax, rest[i]);
+      }
+      const D = Math.max(zMax - zMin, 1e-6);
+      for (let i = 0; i < n * 3; i += 3) {
+        const rear = smoothstep(TAIL_REAR_FROM, TAIL_REAR_TO, (zMax - rest[i + 2]) / D);
+        const low = 1 - smoothstep(TAIL_LOW_FROM, TAIL_LOW_TO, (rest[i + 1] - y0) / H);
+        g[i] += tail * D * rear * low;
       }
     }
 
@@ -453,7 +474,7 @@ export class SoftBody {
     this.goalFront.set(g[fi], g[fi + 1], g[fi + 2]);
     this.goalRear.set(g[ri], g[ri + 1], g[ri + 2]);
 
-    const identity = Math.abs(sy - 1) + Math.abs(st - 1) + Math.abs(bend) + Math.abs(side) + Math.abs(arch) < 1e-4;
+    const identity = Math.abs(sy - 1) + Math.abs(st - 1) + Math.abs(bend) + Math.abs(side) + Math.abs(tail) + Math.abs(arch) < 1e-4;
     if (identity) {
       edgeTarget.set(edgeLen);
       return;
@@ -690,6 +711,17 @@ export class SoftBody {
 
 /** 背骨の弧を表す点の数 */
 const SPINE_SAMPLES = 48;
+/**
+ * お尻を横へ振るときに動かす所（静止形状で）：
+ *   前端からの前後の位置（前後の長さに対する比）が TAIL_REAR_FROM より前は動かさず、TAIL_REAR_TO より後ろは丸ごと
+ *   底からの高さ（高さに対する比）が TAIL_LOW_FROM より下は丸ごと、TAIL_LOW_TO より上は動かさない
+ * 体の約 3 割が振れる。広げると（前端から・高さ 90% まで）お尻の丸みが大きく振れるが、丸い体型では後頭部（帽子の後ろの支え）まで
+ * 振れて頭と帽子が動く。狭くすると（前から 25% より後ろ・高さ 75% まで）お尻の先だけがとがって動く
+ */
+const TAIL_REAR_FROM = 0.3;
+const TAIL_REAR_TO = 0.8;
+const TAIL_LOW_FROM = 0.45;
+const TAIL_LOW_TO = 0.8;
 
 function smoothstep(a: number, b: number, x: number): number {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
