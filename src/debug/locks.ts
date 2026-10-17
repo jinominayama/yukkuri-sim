@@ -12,6 +12,14 @@ const STORAGE_KEY = 'guiLocks';
 const ICON_LOCKED = '🔒';
 const ICON_UNLOCKED = '🔓';
 const ICON_PARTIAL = '◐';
+/**
+ * 見出しの名前を変えたとき、前の名前で保存したロックを引き継ぐ（前の名前 → 今の名前）。
+ * ロックの保存名は「見出し/項目」なので、見出しの名前が変わると、そのままではロックが外れる
+ */
+const RENAMED: Record<string, string> = {
+  '移動（地面をクリックで目的地）': '移動',
+  '操作': '画面・カメラ',
+};
 
 type Value = number | string | boolean;
 
@@ -34,8 +42,9 @@ export class LockManager {
 
   constructor(gui: GUI) {
     const saved = loadJSON<Record<string, Value>>(STORAGE_KEY) ?? {};
-    this.locked = new Map(Object.entries(saved));
-    for (const folder of gui.folders) this.attachFolder(folder);
+    this.locked = new Map(Object.entries(saved).map(([key, v]) => [renamed(key), v]));
+    // 小見出しの中の小見出しにも付ける（大見出しの下にまとめてあるので）
+    for (const folder of gui.foldersRecursive()) this.attachFolder(folder);
     // 前回ロックしていた値を反映する
     if (this.locked.size > 0) this.restore();
     this.refreshAll();
@@ -122,6 +131,13 @@ export class LockManager {
   private save(): void {
     saveJSON(STORAGE_KEY, Object.fromEntries(this.locked));
   }
+}
+
+/** 前の見出しの名前で保存したロックの保存名を、今の見出しの名前にする */
+function renamed(key: string): string {
+  const i = key.indexOf('/');
+  const to = i < 0 ? undefined : RENAMED[key.slice(0, i)];
+  return to ? to + key.slice(i) : key;
 }
 
 /** 表示専用（操作不可）の欄か。lil-gui の版によってクラス名に接頭辞 lil- が付く */

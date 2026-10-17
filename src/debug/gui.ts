@@ -70,23 +70,80 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       showInfo(presetState.id, ok ? `現在の値（${from}）をユーザー設定に上書きしました。` : '保存できませんでした（保存領域が使えません）。');
     },
   }, 'f').name('現在の値をユーザー設定に上書き');
+  pre.add({
+    f: () => {
+      const name = findPreset(presetState.id)?.name ?? '';
+      if (isOverridden(presetState.id) &&
+        !confirm(`「${name}」を初期設定に戻します。保存した値は消えます。よろしいですか？`)) return;
+      resetPreset(presetState.id);
+      Object.assign(y.life, DEFAULT_LIFE);
+      Object.assign(y.colors, DEFAULT_SKIN);
+      y.applyColors();
+      // この体型の帽子・髪の厚み・三つ編みの長さも戻す（付け直しは体型を置き直すときに一緒に行われる）
+      y.outfit.resetFit();
+      y.peni.reset();
+      y.dropping.resetExit();
+      applyPreset(presetState.id);
+    },
+  }, 'f').name('この体型を初期設定に戻す');
   showInfo(y.presetId);
 
-  const act = gui.addFolder('操作');
+  // パネルは目的ごとに 5 つの大見出しにまとめる：
+  //   体型プリセット … 体型の切り替え・保存・初期化
+  //   させる         … 動き・体勢・ごはん・うんうん・吐餡など、押して動かすボタン（押したときの種類の指定も隣に置く）
+  //   見た目         … 顔・キャラクター・ぺにぺに・体の形・塗り・輪郭線
+  //   動きの調整     … 移動・柔らかさ・呼吸・うんうんの出る位置・吐餡の起き方
+  //   画面・カメラ   … つつく強さ・時間・カメラ
+  // 小見出しの名前はロックの保存名に使う。変えたら locks.ts の RENAMED に足して、前にロックした値を引き継ぐ
+  const noLock = (c: { domElement: HTMLElement }) => c.domElement.classList.add('no-lock');
+
+  // ---- させる ----
+  const doGroup = gui.addFolder('させる');
+  const status = { state: '' };
+  doGroup.add(status, 'state').name('今の状態').disable().listen();
+  setInterval(() => (status.state = y.locomotion.stateLabel), 100);
+
+  const act = doGroup.addFolder('動き');
+  act.add({ f: () => y.locomotion.stop() }, 'f').name('止まる');
   act.add({ f: () => y.drop(1.0) }, 'f').name('高さ1mから落とす');
   act.add({ f: () => y.drop(0.02) }, 'f').name('その場に置き直す');
   act.add({ f: () => y.impulse(0, 3.2, 0) }, 'f').name('真上に跳ねさせる');
   act.add({ f: () => y.impulse(1.2, 2.6, 0) }, 'f').name('横に跳ねさせる');
-  act.add(view, 'pokeStrength', 0, 8, 0.1).name('つつく強さ');
-  act.add(view, 'timeScale', 0.05, 2, 0.05).name('時間の速さ');
-  act.add(view, 'paused').name('一時停止');
-  act.add(view, 'followCamera').name('カメラ追従');
-  act.add(view, 'freeCamera').name('カメラの角度制限を解除');
+
+  const pose = doGroup.addFolder('体勢');
+  pose.add({ f: () => y.locomotion.lieDown('prone') }, 'f').name('腹ばいになる');
+  pose.add({ f: () => y.locomotion.lieDown('supine') }, 'f').name('仰向けになる');
+  pose.add({ f: () => y.getUp() }, 'f').name('起き上がる');
+
+  // ごはん：食べ物を目の前に置くと、見つめる → むーしゃむーしゃ → しあわせー の順に食べる
+  const meal = doGroup.addFolder('ごはん');
+  meal.add({ f: () => y.feeding.start() }, 'f').name('食べ物をあげる');
+
+  // うんうん：体の後ろから餡子を絞り出す。出したものは「片付ける」まで残る
+  const poo = doGroup.addFolder('うんうん');
+  poo.add({ f: () => y.dropping.start() }, 'f').name('うんうんする');
+  // うんうんたいそう：歌に合わせて揺れる・伸びる・ひねる・反ってから、うんうんを出す。
+  // 最後に出すときの体勢（デバッグ用）：ランダム・仰向け（後ろへ反る）・腹ばい（お尻を突き上げる）
+  const exerciseOpts = { pose: 'random' };
+  noLock(poo.add(exerciseOpts, 'pose', { ランダム: 'random', 仰向け: 'supine', 腹ばい: 'prone' }).name('たいそうの体勢'));
+  poo.add({
+    f: () => y.exercise.start(exerciseOpts.pose === 'random' ? undefined : exerciseOpts.pose === 'prone'),
+  }, 'f').name('うんうんたいそう');
+  poo.add({ f: () => y.dropping.clear() }, 'f').name('片付ける');
+
+  // 吐餡：口から餡子を吐く（高い所から落ちたときも吐く）。吐いたものは「片付ける」まで残る
+  const vomit = doGroup.addFolder('吐餡');
+  const saveVomit = () => y.vomit.save();
+  vomit.add({ f: () => y.vomit.start() }, 'f').name('吐餡する');
+  noLock(vomit.add(y.vomit.params, 'face', { ランダム: 'random', 白目: 'shock', 泣く: 'cry' }).name('顔').onChange(saveVomit));
+  vomit.add({ f: () => y.vomit.clear() }, 'f').name('片付ける');
+
+  // ---- 見た目 ----
+  const looks = gui.addFolder('見た目');
 
   // 顔：体型プリセットとは別に管理する（体型を切り替えても変わらないのでロックは付けない）。
   // 表情のパーツは画面左上のパーツ選択画面で選ぶ
-  const face = gui.addFolder('顔');
-  const noLock = (c: { domElement: HTMLElement }) => c.domElement.classList.add('no-lock');
+  const face = looks.addFolder('顔');
   const saveFace = () => y.face.save();
   noLock(face.add(y.face.settings, 'style', Object.fromEntries(STYLES.map((s) => [s.name, s.id]))).name('絵柄').onChange(saveFace));
   noLock(face.addColor(y.face.settings, 'iris').name('瞳の色').onChange(saveFace));
@@ -95,7 +152,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   const hairPanel = createHairPanel(leftColumn(), y.outfit);
 
   // キャラクター（髪・帽子などの装飾）：体型とは別に管理する。ただし帽子の大きさ・位置・傾き、髪の厚み、三つ編みの長さは体型ごと
-  const chara = gui.addFolder('キャラクター');
+  const chara = looks.addFolder('キャラクター');
   const outfit = y.outfit;
   const charState = { id: outfit.characterId };
   const saveOutfit = () => outfit.save();
@@ -124,63 +181,9 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(chara.add(outfit.params, 'hairThickness', 0, 0.1, 0.001).name('髪の厚み').onChange(rebuildOutfit));
   noLock(chara.add(outfit.params, 'braidLength', 0.35, 1, 0.01).name('三つ編みの長さ').onChange(rebuildOutfit));
 
-  const mv = gui.addFolder('移動（地面をクリックで目的地）');
-  const status = { state: '' };
-  mv.add(status, 'state').name('状態').disable().listen();
-  setInterval(() => (status.state = y.locomotion.stateLabel), 100);
-  mv.add(y.move, 'mode', { '跳ねる': 'hop', '這う': 'crawl' }).name('移動方法');
-  mv.add(y.move, 'canHop').name('跳ねられる体');
-  mv.add(y.move, 'wander').name('自分でうろつく');
-  mv.add({ f: () => y.locomotion.stop() }, 'f').name('止まる');
-  mv.add(y.move, 'hopHeight', MIN_HOP_HEIGHT, 0.6, 0.01).name('跳ぶ高さ');
-  mv.add(y.move, 'hopDistance', 0.05, 1.2, 0.01).name('1回で進む距離');
-  mv.add(y.move, 'crouchDepth', 0.5, 1, 0.01).name('溜めの深さ');
-  mv.add(y.move, 'crouchTime', 0.05, 0.8, 0.01).name('溜めの時間');
-  mv.add(y.move, 'restTime', 0, 1.5, 0.01).name('着地後の間');
-  mv.add(y.move, 'turnSpeed', 0.3, 6, 0.1).name('向きを変える速さ');
-  mv.add(y.move, 'hopTurnMax', 10, 90, 1).name('跳ねる：顔を向ける最大角度');
-  mv.add(y.move, 'crawlTurnMax', 10, 90, 1).name('這う：顔を向ける最大角度');
-  mv.add(y.move, 'crawlStretch', 1, 1.8, 0.01).name('這う：前に伸びる量');
-  mv.add(y.move, 'crawlSquash', 0.5, 1, 0.01).name('這う：潰れる深さ');
-  mv.add(y.move, 'crawlBend', 0, 0.8, 0.01).name('這う：頭を前に出す量');
-  mv.add(y.move, 'crawlRhythm', 0.2, 2, 0.05).name('這う：リズム');
-
-  // ごはん：食べ物を目の前に置くと、見つめる → むーしゃむーしゃ → しあわせー の順に食べる
-  const meal = gui.addFolder('ごはん');
-  meal.add({ f: () => y.feeding.start() }, 'f').name('食べ物をあげる');
-  // うんうん：体の後ろから餡子を絞り出す。出したものは「片付ける」まで残る
-  const poo = gui.addFolder('うんうん');
-  poo.add({ f: () => y.dropping.start() }, 'f').name('うんうんする');
-  // うんうんたいそう：歌に合わせて揺れる・伸びる・ひねる・反ってから、うんうんを出す。
-  // 最後に出すときの体勢（デバッグ用）：ランダム・仰向け（後ろへ反る）・腹ばい（お尻を突き上げる）
-  const exerciseOpts = { pose: 'random' };
-  noLock(poo.add(exerciseOpts, 'pose', { ランダム: 'random', 仰向け: 'supine', 腹ばい: 'prone' }).name('たいそうの体勢'));
-  poo.add({
-    f: () => y.exercise.start(exerciseOpts.pose === 'random' ? undefined : exerciseOpts.pose === 'prone'),
-  }, 'f').name('うんうんたいそう');
-  poo.add({ f: () => y.dropping.clear() }, 'f').name('片付ける');
-  // 出る位置：体型ごとに保存する（体型を切り替えるとその体型の値になるので、ロックは付けない）
-  const exit = poo.addFolder('出る位置');
-  const saveExit = () => y.dropping.saveExit();
-  noLock(exit.add(y.dropping, 'showExit').name('出る位置を表示'));
-  noLock(exit.add(y.dropping.exit, 'height', 0.05, 0.6, 0.01).name('高さ（背中側）').onChange(saveExit));
-  noLock(exit.add(y.dropping.exit, 'side', -1, 1, 0.01).name('左右（+で体の右）').onChange(saveExit));
-  noLock(exit.add(y.dropping.exit, 'frontHeight', 0.03, 0.4, 0.01).name('高さ（前から出すとき）').onChange(saveExit));
-  noLock(exit.add(y.dropping.exit, 'supineHeight', 0.2, 0.9, 0.01).name('高さ（寝転んで仰向け）').onChange(saveExit));
-  noLock(exit.add(y.dropping.exit, 'rolledHeight', 0.05, 0.6, 0.01).name('高さ（横に転がった仰向け）').onChange(saveExit));
-  exit.close();
-
-  // 吐餡：高い所から落ちると、口から餡子を吐く。吐いたものは「片付ける」まで残る
-  const vomit = gui.addFolder('吐餡');
-  const saveVomit = () => y.vomit.save();
-  vomit.add({ f: () => y.vomit.start() }, 'f').name('吐餡する');
-  noLock(vomit.add(y.vomit.params, 'face', { ランダム: 'random', 白目: 'shock', 泣く: 'cry' }).name('顔').onChange(saveVomit));
-  noLock(vomit.add(y.vomit.params, 'fallHeight', 0.3, 3, 0.05).name('吐く落下の高さ(m)').onChange(saveVomit));
-  vomit.add({ f: () => y.vomit.clear() }, 'f').name('片付ける');
-
   // ぺにぺに：顔の正面の下に生える円錐
   // 設定は体型ごとに保存する（体型を切り替えるとその体型の設定になるので、ロックは付けない）
-  const peni = gui.addFolder('ぺにぺに');
+  const peni = looks.addFolder('ぺにぺに');
   const savePeni = () => y.peni.save();
   noLock(peni.add(y.peni.params, 'show').name('出す').onChange(savePeni));
   noLock(peni.add(y.peni.params, 'at', 0, 1, 0.01).name('位置（口の下〜地面）').onChange(savePeni));
@@ -189,30 +192,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(peni.add(y.peni.params, 'rise', 0, 1, 0.05).name('上向き').onChange(savePeni));
   noLock(peni.add(y.peni.params, 'round', 0, 1, 0.01).name('先の丸み').onChange(savePeni));
 
-  const pose = gui.addFolder('体勢');
-  pose.add({ f: () => y.locomotion.lieDown('prone') }, 'f').name('腹ばいになる');
-  pose.add({ f: () => y.locomotion.lieDown('supine') }, 'f').name('仰向けになる');
-  pose.add({ f: () => y.getUp() }, 'f').name('起き上がる');
-
-  const soft = gui.addFolder('柔らかさ');
-  soft.add(y.physics, 'shapeStiffness', 0, 1, 0.005).name('形に戻る強さ（通常）');
-  soft.add(y.physics, 'hopStiffness', 0, 1, 0.005).name('形に戻る強さ（跳躍中）');
-  soft.add(y.physics, 'proneStiffness', 0, 1, 0.005).name('形に戻る強さ（腹ばい）');
-  soft.add(y.physics, 'supineStiffness', 0, 1, 0.005).name('形に戻る強さ（仰向け）');
-  soft.add(y.physics, 'upright', 0, 0.5, 0.005).name('姿勢を保つ強さ');
-  soft.add(y.physics, 'edgeCompliance', 0, 0.01, 0.0001).name('皮の伸びやすさ');
-  soft.add(y.physics, 'volumeCompliance', 0, 0.01, 0.0001).name('体積の変わりやすさ');
-  soft.add(y.physics, 'bounce', 0, 1, 0.01).name('弾み（跳ね返り）');
-  soft.add(y.physics, 'damping', 0, 5, 0.05).name('揺れの収まりやすさ');
-  soft.add(y.physics, 'friction', 0, 1, 0.01).name('地面の摩擦');
-  soft.add(y.physics, 'gravity', 0, 20, 0.1).name('重力');
-  soft.add(y.physics, 'substeps', 1, 30, 1).name('計算の細かさ');
-
-  const life = gui.addFolder('呼吸');
-  life.add(y.life, 'breath', 0, 0.1, 0.001).name('大きさ');
-  life.add(y.life, 'breathRate', 0.05, 1.5, 0.01).name('速さ');
-
-  const shape = gui.addFolder('体の形（静止時）');
+  const shape = looks.addFolder('体の形（静止時）');
   const onShape = () => y.applyShape();
   shape.add(y.shape, 'radius', 0.3, 0.8, 0.01).name('胴の大きさ(m)').onChange(onShape);
   shape.add(y.shape, 'bodyLength', 0, 2, 0.01).name('胴の長さ').onChange(onShape);
@@ -233,7 +213,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   shape.add(y.shape, 'faceHeight', -1, 1, 0.01).name('顔の高さ').onChange(onShape);
 
   const u = y.bodyMaterial.uniforms;
-  const shading = gui.addFolder('塗り');
+  const shading = looks.addFolder('塗り');
   const onColor = () => y.applyColors();
   shading.addColor(y.colors, 'lit').name('明部').onChange(onColor);
   shading.addColor(y.colors, 'shade').name('中間').onChange(onColor);
@@ -245,35 +225,76 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   shading.add(u.uRim, 'value', 0, 1, 0.01).name('縁の光の強さ');
   shading.add(u.uContactShade, 'value', 0, 0.4, 0.01).name('接地の暗さ');
 
-  const outline = gui.addFolder('輪郭線');
+  const outline = looks.addFolder('輪郭線');
   outline.add(y, 'outlineVisible').name('表示');
   outline.add(y.outlineMaterial.uniforms.uWidth, 'value', 0, 8, 0.1).name('太さ(px)');
   outline.addColor({ c: '#3b2618' }, 'c').name('色').onChange((c: string) => {
     y.outlineMaterial.uniforms.uColor.value.set(c);
   });
 
-  gui.add({
-    reset: () => {
-      const name = findPreset(presetState.id)?.name ?? '';
-      if (isOverridden(presetState.id) &&
-        !confirm(`「${name}」を初期設定に戻します。保存した値は消えます。よろしいですか？`)) return;
-      resetPreset(presetState.id);
-      Object.assign(y.life, DEFAULT_LIFE);
-      Object.assign(y.colors, DEFAULT_SKIN);
-      y.applyColors();
-      // この体型の帽子・髪の厚み・三つ編みの長さも戻す（付け直しは体型を置き直すときに一緒に行われる）
-      y.outfit.resetFit();
-      y.peni.reset();
-      y.dropping.resetExit();
-      applyPreset(presetState.id);
-    },
-  }, 'reset').name('この体型を初期設定に戻す');
+  // ---- 動きの調整 ----
+  const tune = gui.addFolder('動きの調整');
 
-  soft.close();
-  life.close();
-  shape.close();
-  shading.close();
-  outline.close();
+  const mv = tune.addFolder('移動');
+  mv.add(y.move, 'mode', { '跳ねる': 'hop', '這う': 'crawl' }).name('移動方法');
+  mv.add(y.move, 'canHop').name('跳ねられる体');
+  mv.add(y.move, 'wander').name('自分でうろつく');
+  mv.add(y.move, 'hopHeight', MIN_HOP_HEIGHT, 0.6, 0.01).name('跳ぶ高さ');
+  mv.add(y.move, 'hopDistance', 0.05, 1.2, 0.01).name('1回で進む距離');
+  mv.add(y.move, 'crouchDepth', 0.5, 1, 0.01).name('溜めの深さ');
+  mv.add(y.move, 'crouchTime', 0.05, 0.8, 0.01).name('溜めの時間');
+  mv.add(y.move, 'restTime', 0, 1.5, 0.01).name('着地後の間');
+  mv.add(y.move, 'turnSpeed', 0.3, 6, 0.1).name('向きを変える速さ');
+  mv.add(y.move, 'hopTurnMax', 10, 90, 1).name('跳ねる：顔を向ける最大角度');
+  mv.add(y.move, 'crawlTurnMax', 10, 90, 1).name('這う：顔を向ける最大角度');
+  mv.add(y.move, 'crawlStretch', 1, 1.8, 0.01).name('這う：前に伸びる量');
+  mv.add(y.move, 'crawlSquash', 0.5, 1, 0.01).name('這う：潰れる深さ');
+  mv.add(y.move, 'crawlBend', 0, 0.8, 0.01).name('這う：頭を前に出す量');
+  mv.add(y.move, 'crawlRhythm', 0.2, 2, 0.05).name('這う：リズム');
+
+  const soft = tune.addFolder('柔らかさ');
+  soft.add(y.physics, 'shapeStiffness', 0, 1, 0.005).name('形に戻る強さ（通常）');
+  soft.add(y.physics, 'hopStiffness', 0, 1, 0.005).name('形に戻る強さ（跳躍中）');
+  soft.add(y.physics, 'proneStiffness', 0, 1, 0.005).name('形に戻る強さ（腹ばい）');
+  soft.add(y.physics, 'supineStiffness', 0, 1, 0.005).name('形に戻る強さ（仰向け）');
+  soft.add(y.physics, 'upright', 0, 0.5, 0.005).name('姿勢を保つ強さ');
+  soft.add(y.physics, 'edgeCompliance', 0, 0.01, 0.0001).name('皮の伸びやすさ');
+  soft.add(y.physics, 'volumeCompliance', 0, 0.01, 0.0001).name('体積の変わりやすさ');
+  soft.add(y.physics, 'bounce', 0, 1, 0.01).name('弾み（跳ね返り）');
+  soft.add(y.physics, 'damping', 0, 5, 0.05).name('揺れの収まりやすさ');
+  soft.add(y.physics, 'friction', 0, 1, 0.01).name('地面の摩擦');
+  soft.add(y.physics, 'gravity', 0, 20, 0.1).name('重力');
+  soft.add(y.physics, 'substeps', 1, 30, 1).name('計算の細かさ');
+
+  const life = tune.addFolder('呼吸');
+  life.add(y.life, 'breath', 0, 0.1, 0.001).name('大きさ');
+  life.add(y.life, 'breathRate', 0.05, 1.5, 0.01).name('速さ');
+
+  // うんうんの出る位置：体型ごとに保存する（体型を切り替えるとその体型の値になるので、ロックは付けない）
+  const exit = tune.addFolder('うんうんの出る位置');
+  const saveExit = () => y.dropping.saveExit();
+  noLock(exit.add(y.dropping, 'showExit').name('出る位置を表示'));
+  noLock(exit.add(y.dropping.exit, 'height', 0.05, 0.6, 0.01).name('高さ（背中側）').onChange(saveExit));
+  noLock(exit.add(y.dropping.exit, 'side', -1, 1, 0.01).name('左右（+で体の右）').onChange(saveExit));
+  noLock(exit.add(y.dropping.exit, 'frontHeight', 0.03, 0.4, 0.01).name('高さ（前から出すとき）').onChange(saveExit));
+  noLock(exit.add(y.dropping.exit, 'supineHeight', 0.2, 0.9, 0.01).name('高さ（寝転んで仰向け）').onChange(saveExit));
+  noLock(exit.add(y.dropping.exit, 'rolledHeight', 0.05, 0.6, 0.01).name('高さ（横に転がった仰向け）').onChange(saveExit));
+
+  const vomitTune = tune.addFolder('吐餡の起き方');
+  noLock(vomitTune.add(y.vomit.params, 'fallHeight', 0.3, 3, 0.05).name('吐く落下の高さ(m)').onChange(saveVomit));
+
+  // ---- 画面・カメラ ----
+  const screen = gui.addFolder('画面・カメラ');
+  screen.add(view, 'pokeStrength', 0, 8, 0.1).name('つつく強さ');
+  screen.add(view, 'timeScale', 0.05, 2, 0.05).name('時間の速さ');
+  screen.add(view, 'paused').name('一時停止');
+  screen.add(view, 'followCamera').name('カメラ追従');
+  screen.add(view, 'freeCamera').name('カメラの角度制限を解除');
+
+  // 最初に開いておくのは、よく使う「体型プリセット」と「させる」だけ（ほかの大見出しは、開いたときに小見出しが閉じて並ぶ）
+  for (const f of [looks, tune, screen]) f.close();
+  for (const f of [...looks.folders, ...tune.folders]) f.close();
+
   // 各項目と各見出しにロックボタンを付ける（全項目を作り終えてから）
   locks = new LockManager(gui);
   return gui;

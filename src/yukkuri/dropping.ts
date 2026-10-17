@@ -20,7 +20,7 @@ import type { Yukkuri } from './Yukkuri';
  */
 type Phase = 'none' | 'wait' | 'push' | 'relief';
 
-/** 出口の位置の調整値（体型ごとに保存する。調整パネルの「うんうん」→「出る位置」） */
+/** 出口の位置の調整値（体型ごとに保存する。調整パネルの「動きの調整」→「うんうんの出る位置」） */
 export interface ExitParams {
   /** いつもの出口：背中側（顔の正面から π）の、床から体の高さのこの比の所 */
   height: number;
