@@ -26,6 +26,22 @@ export interface PeniParams {
 
 export const DEFAULT_PENI: PeniParams = { show: false, at: 0.45, length: 0.28, radius: 0.075, rise: 0.3, round: 0.45 };
 
+/** 体型ごとの初期値（DEFAULT_PENI との違いだけ。体型 ID → 値）。調整パネルで体型ごとに合わせた値 */
+const PRESET_PENI: Record<string, Partial<PeniParams>> = {
+  user: { at: 0.83, length: 0.6, rise: 0.35 },
+  ball: { at: 0.42, length: 0.35, rise: 0.35, round: 0.48 },
+  egg: { at: 0.62 },
+  chick: { at: 0.63 },
+  flat: { at: 0.52 },
+  eggplant: { at: 0.63 },
+  caterpillar: { at: 0.62, length: 0.4 },
+};
+
+/** 体型 id の初期値 */
+function peniDefaults(id: string): PeniParams {
+  return { ...DEFAULT_PENI, ...PRESET_PENI[id] };
+}
+
 /** 保存先。体型 ID → その体型の設定（初期値のままの体型は持たない） */
 const STORAGE_KEY = 'peni';
 
@@ -141,6 +157,8 @@ export class Peni {
   private readonly nrm = new THREE.Vector3();
   private readonly dir = new THREE.Vector3();
   private static readonly UP = new THREE.Vector3(0, 1, 0);
+  /** 向きの基準にする上向き（寝転がっていなければ体の上向き、寝転がっていれば真上） */
+  private readonly up = new THREE.Vector3();
   /** 生やしている体の頂点（-1 は未定）と、それを選んだときの設定 */
   private vertex = -1;
   private chosenFor = '';
@@ -164,7 +182,7 @@ export class Peni {
   /** 体型を切り替える：設定を、その体型で保存したもの（なければ初期値）にする */
   usePreset(id: string): void {
     this.presetId = id;
-    Object.assign(this.params, DEFAULT_PENI, this.saved[id]);
+    Object.assign(this.params, peniDefaults(id), this.saved[id]);
     // 開いたとき・体型を切り替えたときは動きを付けず、その体型の状態から始める
     this.progress = this.params.show ? 1 : 0;
   }
@@ -183,9 +201,9 @@ export class Peni {
     return 1 + EMERGE_OVER * Math.cos(Math.PI * 1.5 * q) * Math.exp(-3 * q) * (1 - smoother(q));
   }
 
-  /** 今の体型の設定を初期値に戻す */
+  /** 今の体型の設定を初期値（その体型の初期値）に戻す */
   reset(): void {
-    Object.assign(this.params, DEFAULT_PENI);
+    Object.assign(this.params, peniDefaults(this.presetId));
     this.save();
   }
 
@@ -204,7 +222,8 @@ export class Peni {
 
   private store(id: string): void {
     const p = this.params;
-    const same = (Object.keys(DEFAULT_PENI) as (keyof PeniParams)[]).every((k) => p[k] === DEFAULT_PENI[k]);
+    const d = peniDefaults(id);
+    const same = (Object.keys(d) as (keyof PeniParams)[]).every((k) => p[k] === d[k]);
     if (same) delete this.saved[id];
     else this.saved[id] = { ...p };
   }
@@ -246,11 +265,17 @@ export class Peni {
       this.object.visible = false;
       return;
     }
-    // 向き：表面の外向き（下向きの成分は除き、地面へ向けない）を、反りの分だけ真上へ寄せる
+    // 向き：表面の外向き（下向きの成分は除く）を、反りの分だけ上へ寄せる。
+    // 上下は体の上向きで測る（体を前へ傾けたとき（もるんもるん・体操など）も、体に対して同じ向きに生える。
+    // 真上で測ると、体だけが傾いてぺにぺにが起き上がり、口の方へ向かって生えて見える）。
+    // 寝転がっているときは真上で測る（体の上向きが横を向き、地面に沿って生えてしまう）
+    if (y.locomotion.isLying) this.up.copy(Peni.UP);
+    else this.up.set(0, 1, 0).applyQuaternion(y.body.rotation);
     this.dir.copy(this.nrm);
-    this.dir.y = Math.max(0, this.dir.y);
+    const down = this.dir.dot(this.up);
+    if (down < 0) this.dir.addScaledVector(this.up, -down);
     if (this.dir.lengthSq() < 1e-6) this.dir.set(0, 0, 1);
-    this.dir.normalize().lerp(Peni.UP, p.rise).normalize();
+    this.dir.normalize().lerp(this.up, p.rise).normalize();
     // 体の表面から MIN_SURFACE_ANGLE 以上起こす（表面に沿う成分を縮める）
     const minUp = Math.sin(MIN_SURFACE_ANGLE);
     const up = this.dir.dot(this.nrm);
@@ -260,6 +285,17 @@ export class Peni {
       else this.dir.copy(this.nrm);
     }
     const length = Peni.lengthAt(t);
+    // 先が地面に刺さる向きなら、刺さらない所まで上へ起こす（根元から持ち上げると体から離れて見える）
+    const reach = p.length * R * length;
+    const floor = GROUND_CLEAR * R;
+    if (reach > 1e-6 && this.pos.y + this.dir.y * reach < floor) {
+      const need = Math.min(1, (floor - this.pos.y) / reach);
+      const flat = Math.hypot(this.dir.x, this.dir.z);
+      if (flat > 1e-6) {
+        const k = Math.sqrt(Math.max(0, 1 - need * need)) / flat;
+        this.dir.set(this.dir.x * k, need, this.dir.z * k);
+      } else this.dir.set(0, 1, 0);
+    }
     const fade = smoother(length / OUTLINE_FADE);
     this.mesh.position.copy(this.pos).addScaledVector(this.dir, -(1 - fade) * SINK_DEPTH * p.radius * R);
     this.mesh.quaternion.setFromUnitVectors(Peni.UP, this.dir);
