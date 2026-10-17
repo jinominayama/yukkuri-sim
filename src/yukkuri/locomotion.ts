@@ -146,6 +146,10 @@ const RISE_SPEED = 1.2;
 const GESTURE_POSTURE = 0.25;
 /** 身ぶりで背骨を縦に曲げている間の、形に戻る強さの下限 */
 const GESTURE_STIFFNESS = 0.6;
+/** 起き上がってから、倒れても寝転ばず立て直す猶予（秒） */
+const RISE_GRACE = 1.5;
+/** 前後に長い体型が倒れたとき、長い軸のまわりにこれ（rad）より転がっていれば、横に転がりきって仰向けになる */
+const FALL_ROLL = Math.PI / 4;
 /** 起き上がり完了とみなす傾き (rad) */
 const RECOVERED = (10 * Math.PI) / 180;
 
@@ -223,6 +227,8 @@ export class Locomotion {
   private rolledOnBack = false;
   /** 横に転がって起きたあと、続けて腹ばいへ倒れる */
   private proneAfterRoll = false;
+  /** 起き上がってからの猶予（秒）。この間に倒れても寝転ばず立て直す */
+  private riseGrace = 0;
   private readonly _rq = new Quaternion();
   /** 姿勢の指令が目標に届いてからの時間 */
   private reachedFor = 0;
@@ -314,6 +320,43 @@ export class Locomotion {
       this.poseCmd.copy(b.rotation);
       this.phaseTarget.setFromAxisAngle(Y_AXIS, b.yaw).multiply(lyingLocal(pose));
     }
+    this.go('lieDown');
+  }
+
+  /**
+   * 倒れた（傾きが FALLEN を超えた）：立て直さず、今の姿勢から近い方の寝転び（腹ばい・仰向け）へなめらかに移る。
+   * 前後に長い体型が横へ倒れたときは、そのまま転がりきって仰向けになる（横に転がった仰向け）。移動はやめる
+   */
+  private fallOver(): void {
+    const b = this.body;
+    this.hasTarget = false;
+    this.reachedFor = 0;
+    this.proneAfterRoll = false;
+    if (this.isLongBody()) {
+      // 長い軸のまわりにどれだけ転がっているか（getUp と同じ測り方）
+      const axis = this.forwardAxis(b.rotation);
+      const yaw = Math.atan2(axis.x, axis.z);
+      const right = new Vector3(1, 0, 0).applyAxisAngle(Y_AXIS, yaw);
+      const up = new Vector3(0, 1, 0).applyQuaternion(b.rotation);
+      const rolled = Math.atan2(-up.dot(right), up.y);
+      if (Math.abs(rolled) > FALL_ROLL) {
+        this.lieSign = -1;
+        this.poseCmd.setFromAxisAngle(axis, rolled).multiply(new Quaternion().setFromAxisAngle(Y_AXIS, yaw));
+        this.startRoll(axis, rolled > 0 ? 1 : -1, Math.PI - Math.abs(rolled));
+        this.rolledOnBack = true;
+        this.go('lieDown');
+        return;
+      }
+    }
+    // 腹ばい・仰向けそれぞれで、今の姿勢に一番近い向きのものを比べ、近い方へ
+    const prone = nearestPose(lyingLocal('prone'), b.rotation, new Quaternion());
+    const supine = nearestPose(lyingLocal('supine'), b.rotation, new Quaternion());
+    const toProne = prone.angleTo(b.rotation) <= supine.angleTo(b.rotation);
+    this.lieSign = toProne ? 1 : -1;
+    this.rolling = false;
+    this.rolledOnBack = false;
+    this.poseCmd.copy(b.rotation);
+    this.phaseTarget.copy(toProne ? prone : supine);
     this.go('lieDown');
   }
 
@@ -513,7 +556,13 @@ export class Locomotion {
     const tilt = tiltOf(b);
     // （自分から横になる・起き上がる途中は除く）
     const selfLying = this.state === 'lieDown' || this.state === 'lying' || this.state === 'getUp';
-    if (this.state !== 'recover' && this.state !== 'air' && !selfLying && !this.gesture && tilt > FALLEN) this.go('recover');
+    // 倒れすぎたら、近い方の寝転び（腹ばい・仰向け）へそのまま移る。
+    // 起き上がった直後（起き上がりきれずに傾いたまま立った）だけは、寝転びと起き上がりを繰り返さないよう立て直す
+    this.riseGrace = Math.max(0, this.riseGrace - dt);
+    if (this.state !== 'recover' && this.state !== 'air' && !selfLying && !this.gesture && tilt > FALLEN) {
+      if (this.riseGrace > 0) this.go('recover');
+      else this.fallOver();
+    }
     let leanRate = 6; // 前傾の追従の速さ (1/s)
 
     // 立ち姿勢の重心の高さ（跳躍の基準）。止まっている間だけ更新する
@@ -556,7 +605,8 @@ export class Locomotion {
         const risen = this.rolling ? this.followRoll(dt) : this.followPose(dt, RISE_SPEED);
         if (risen && (tilt < RECOVERED || this.reachedFor > 2)) {
           this.rolling = false;
-          // 起き上がりきれなくても、倒れていれば「体勢を立て直す」が引き継ぐ
+          // 起き上がりきれなくても、倒れていれば「体勢を立て直す」が引き継ぐ（しばらくは倒れても寝転ばない）
+          this.riseGrace = RISE_GRACE;
           this.go('idle');
           break;
         }
