@@ -92,6 +92,8 @@ if (import.meta.env.DEV) {
 createDebugGui(yukkuri, view);
 
 // クリック（ドラッグではない）：体ならつつく（Shift を押しながらなら叩く）、地面なら目的地にする
+// （地面は、Shift を押しながらなら跳ねて、Alt を押しながらなら這って、Ctrl を押しながらならもるんもるんで行く。
+//   何も押さなければ「移動方法」の設定どおり。Ctrl＋ドラッグはカメラを回すが、動かさずに離せばクリック）
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let downX = 0, downY = 0;
@@ -111,7 +113,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     return;
   }
   const g = raycaster.intersectObject(ground, false)[0];
-  if (g) yukkuri.locomotion.moveTo(g.point.x, g.point.z);
+  if (g) yukkuri.locomotion.moveTo(g.point.x, g.point.z, e.shiftKey ? 'hop' : e.altKey ? 'crawl' : e.ctrlKey ? 'moru' : null);
 });
 
 const drawSize = new THREE.Vector2();

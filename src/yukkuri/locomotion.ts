@@ -256,8 +256,11 @@ export class Locomotion {
   wagSide = 1;
   /** 動けない間に指示された行き先がある（target に入っている） */
   deferred = false;
-  /** 移動方法を一時的に差し替える（汚れから離れるときなど。null で設定どおり。もるんもるん中はそちらが優先） */
-  modeOverride: MoveMode | null = null;
+  /**
+   * 今の行き先へ向かうときの移動方法（moveTo で指定。null で設定 params.mode どおり）。
+   * 着いた・止めた・ほかの行き先を指定したら戻る。もるんもるんの最中はそちらが優先
+   */
+  private targetMode: MoveMode | null = null;
   private state: State = 'idle';
   private t = 0;
   private airborne = false;
@@ -603,8 +606,10 @@ export class Locomotion {
     return this.state === 'lieDown' || this.state === 'lying';
   }
 
-  moveTo(x: number, z: number): void {
+  /** 行き先を決める。mode を渡すと、そこへ向かう間だけその移動方法にする（跳ねられない体型は這う） */
+  moveTo(x: number, z: number, mode: MoveMode | null = null): void {
     this.target.set(x, 0, z);
+    this.targetMode = mode;
     this.idleFor = 0;
     if (this.holding) this.deferred = true;
     else this.hasTarget = true;
@@ -612,6 +617,7 @@ export class Locomotion {
 
   stop(): void {
     this.hasTarget = false;
+    this.targetMode = null;
     this.deferred = false;
   }
 
@@ -632,6 +638,7 @@ export class Locomotion {
   /** 体を置き直したときなどに、移動・体勢を待機状態に戻す（横になっていても立った状態に戻る） */
   reset(): void {
     this.hasTarget = false;
+    this.targetMode = null;
     this.cmdYaw = null;
     this.squash = 1;
     this.stretch = 1;
@@ -844,6 +851,12 @@ export class Locomotion {
           this.arrive();
           break;
         }
+        // 途中で跳ねる・這うを指定し直したら切り替える
+        const next = this.moveState();
+        if (next !== 'moru') {
+          this.go(next);
+          break;
+        }
         const maxTurn = p.turnSpeed * MORU_TURN * dt;
         this.cmdYaw = (this.cmdYaw ?? b.yaw) + Math.max(-maxTurn, Math.min(maxTurn, wrapAngle(wantYaw - (this.cmdYaw ?? b.yaw))));
         act.yaw = this.cmdYaw;
@@ -951,6 +964,9 @@ export class Locomotion {
           const stride = Math.max(0, (b.center.x - this.cycleFrom.x) * fx + (b.center.z - this.cycleFrom.z) * fz);
           this.cycleFrom.copy(b.center);
           if (!needsMove || dist < stride * 0.5) { this.arrive(); break; }
+          // 途中で移動方法を変えた（跳ねる・もるんもるんを指定し直した）ら、1 回の伸び縮みを終えたところで切り替える
+          const next = this.moveState();
+          if (next !== 'crawl') { this.go(next); break; }
           this.t = u / p.crawlRhythm;
           this.planCrawlTurn(yawErr);
           const fullStride = stride / Math.max(this.crawlAmp, 0.15);
@@ -1042,7 +1058,7 @@ export class Locomotion {
   }
 
   private moveState(): State {
-    const mode = this.modeOverride ?? this.params.mode;
+    const mode = this.targetMode ?? this.params.mode;
     if (this.moru || mode === 'moru') return 'moru';
     return mode === 'hop' && this.params.canHop ? 'crouch' : 'crawl';
   }
@@ -1093,6 +1109,7 @@ export class Locomotion {
 
   private arrive(): void {
     this.hasTarget = false;
+    this.targetMode = null;
     this.go('idle');
   }
 

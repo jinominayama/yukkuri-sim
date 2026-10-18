@@ -126,8 +126,7 @@ export class Flee {
     const to = this.destination();
     // 跳ねる・這うは、そのときのストレスで決める（起き上がっている間に変わっていることもある）
     const mode: MoveMode = y.stress.value >= STRESS_CRAWL || !y.move.canHop ? 'crawl' : 'hop';
-    loco.modeOverride = mode;
-    loco.moveTo(to.x, to.z);
+    loco.moveTo(to.x, to.z, mode);
     this.dest.copy(loco.target);
     this.phase = 'moving';
     this.t = 0;
@@ -135,7 +134,6 @@ export class Flee {
 
   private end(): void {
     const y = this.y;
-    y.locomotion.modeOverride = null;
     if (this.face && y.face.override === this.face) y.face.override = null;
     this.face = null;
     this.phase = 'none';
