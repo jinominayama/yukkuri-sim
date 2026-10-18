@@ -179,6 +179,19 @@ const MORU_SIDE_DAMP = 12;
  * 弱く保つとその分だけ体ごと回ってしまう（お尻を振るたびに頭が逆へ振れて、転がるように見える）。強く保って体の向きは動かさない
  */
 const MORU_POSTURE = 1;
+/**
+ * 寝転んでいるときにつつかれた・叩かれた（knock）：押された向きへ「ごろん」と半回転転がる（寝返りと同じく姿勢の指令を回す）。
+ * 回る速さ（rad/s）は押す強さ（m/s）のこれ倍（KNOCK_ROLL_MIN〜KNOCK_ROLL_MAX）。転がり終えたら近い方の寝転びに落ち着き、
+ * 転がした向きがほぼ真っすぐ立った向き（傾きが KNOCK_STAND より小さい）なら立つ（前後に長い体型の、背中を下にした仰向けから転がったとき）。
+ * 何回も転がるときは、1 回ずつ落ち着いてから次を転がる（続けて 2 回分回すと、ひよこ・扁平・いもむし型は体が付いてこられず、
+ * 半回転ほどで元の側へ戻った）。速さも、4 以上ではこれらの体型が転がりきれなかった
+ */
+const KNOCK_ROLL_GAIN = 1.1;
+const KNOCK_ROLL_MIN = 2.5;
+const KNOCK_ROLL_MAX = 3.5;
+const KNOCK_STAND = (30 * Math.PI) / 180;
+/** 立っているときに押されて倒れる（knockDown）ときの、倒れる速さ（rad/s。自分から横になるときより速い） */
+const KNOCK_DOWN_SPEED = 3.2;
 /** 起き上がってから、倒れても寝転ばず立て直す猶予（秒） */
 const RISE_GRACE = 1.5;
 /** 前後に長い体型が倒れたとき、長い軸のまわりにこれ（rad）より転がっていれば、横に転がりきって仰向けになる */
@@ -278,6 +291,15 @@ export class Locomotion {
   /** 起き上がってからの猶予（秒）。この間に倒れても寝転ばず立て直す */
   private riseGrace = 0;
   private readonly _rq = new Quaternion();
+  /** 今の転がりの速さ（rad/s）と、つつかれて転がっている最中か（転がり終えたら近い方の寝転びに落ち着かせる） */
+  private rollSpeed = ROLL_SPEED;
+  private knockRoll = false;
+  /** 横になる（倒れる・起き上がる）ときの姿勢の速さ（押されて倒れるときだけ速い） */
+  private lieSpeed = LIE_SPEED;
+  /** つつかれて、この後に続けて転がる回数と、その向き・強さ */
+  private knockQueue = 0;
+  private readonly knockDir = new Vector3();
+  private knockPower = 0;
   /** 姿勢の指令が目標に届いてからの時間 */
   private reachedFor = 0;
   /** 指令中の向き（目標の向きへ turnSpeed で近づける） */
@@ -346,6 +368,8 @@ export class Locomotion {
    */
   lieDown(pose: LyingPose): void {
     const b = this.body;
+    this.knockQueue = 0; // つつかれて続けて転がる分は、ほかの指示が来たらやめる
+    this.lieSpeed = LIE_SPEED;
     const sign = pose === 'prone' ? 1 : -1;
     const lying = this.state === 'lieDown' || this.state === 'lying';
     this.hasTarget = false;
@@ -422,10 +446,72 @@ export class Locomotion {
     this.go('lieDown');
   }
 
+  /**
+   * つつかれた・叩かれた：寝転んでいれば、押された水平の向き (dirX, dirZ) へ「ごろん」と turns 回（半回転ずつ）転がる。
+   * 速さは押す強さ power（m/s）で決まる。転がっている最中にまたつつかれたら、同じ向きならもう 1 回分転がる。
+   * 寝転ぶ途中・起き上がる途中・ほかの動き（うんうん・吐餡など）の最中は転がらない。転がったら true
+   */
+  knock(dirX: number, dirZ: number, power: number, turns = 1): boolean {
+    if (this.holding) return false;
+    if (this.state === 'lieDown' && this.knockRoll) {
+      // 転がっている最中：転がり終えたら、続けて転がる（1 回ずつ）
+      this.knockQueue += turns;
+      this.knockDir.set(dirX, 0, dirZ);
+      this.knockPower = power;
+      return true;
+    }
+    if (this.state !== 'lying') return false;
+    const len = Math.hypot(dirX, dirZ);
+    if (len < 0.1) return false; // 真上から押した（転がる向きが決まらない）
+    // 押された向きへ転がる回り方（上の面が押された向きへ進む）：軸は 真上 × 押された向き
+    const axis = new Vector3(dirZ / len, 0, -dirX / len);
+    if (this.isLongBody()) {
+      // 前後に長い体型は、長い軸のまわりに丸太のように転がる（前後に転がすと長い体が縦に起きる）。
+      // 向きは、押された向きの、長い軸に直交する成分の側（ほぼ真っすぐ前後から押したら、どちらかへ）
+      const long = this.forwardAxis(this.poseCmd);
+      const side = new Vector3(dirX / len, 0, dirZ / len).cross(long).y;
+      // 上の面が押された向きへ進む向き（長い軸 × 真上 が押された向きと同じ側）。(長い軸 × 真上)・押された向き ＝ side
+      const sign = Math.abs(side) > 0.05 ? Math.sign(side) : Math.random() < 0.5 ? 1 : -1;
+      axis.copy(long).multiplyScalar(sign);
+    }
+    const speed = Math.min(KNOCK_ROLL_MAX, Math.max(KNOCK_ROLL_MIN, KNOCK_ROLL_GAIN * power));
+    this.hasTarget = false;
+    this.reachedFor = 0;
+    this.proneAfterRoll = false;
+    // 横に転がって仰向けになっている体型も、ここからは普通の寝転びとして扱う（転がり終えたら近い方を選び直す）
+    this.rolledOnBack = false;
+    this.startRoll(axis, 1, Math.PI);
+    this.rollSpeed = speed;
+    this.knockRoll = true;
+    this.lieSign = -this.lieSign;
+    // 残りは、転がり終えて落ち着いてから（'lying' で）続ける
+    this.knockQueue = turns - 1;
+    this.knockDir.set(dirX, 0, dirZ);
+    this.knockPower = power;
+    this.go('lieDown');
+    return true;
+  }
+
+  /**
+   * 立っているときに押されて倒れる：押された水平の向き (dirX, dirZ) へ倒れる（後ろから押されたら前へ倒れて腹ばい、
+   * 前から押されたら後ろへ倒れて仰向け）。ほかの動きの最中・もるんもるんの最中・寝転んでいるときは倒れない。倒れたら true
+   */
+  knockDown(dirX: number, dirZ: number): boolean {
+    if (this.holding || this.isLying || this.state === 'getUp' || this.inMoruPose) return false;
+    const b = this.body;
+    const forward = Math.sin(b.yaw) * dirX + Math.cos(b.yaw) * dirZ;
+    this.gesture = null;
+    this.lieDown(forward >= 0 ? 'prone' : 'supine');
+    this.lieSpeed = KNOCK_DOWN_SPEED;
+    return true;
+  }
+
   /** 横になっていれば、そのまま体を起こして起き上がる（横に転がって仰向けになっていれば、横に転がって戻る） */
   getUp(): void {
     if (this.state !== 'lieDown' && this.state !== 'lying') return;
     const b = this.body;
+    this.knockQueue = 0;
+    this.knockRoll = false;
     this.rolling = false;
     this.proneAfterRoll = false;
     this.reachedFor = 0;
@@ -470,6 +556,8 @@ export class Locomotion {
   /** 今の姿勢の指令から、水平な軸 axis のまわりに sign の向きへ total (rad) 転がり始める */
   private startRoll(axis: Vector3, sign: number, total = Math.PI): void {
     this.rolling = true;
+    this.rollSpeed = ROLL_SPEED;
+    this.knockRoll = false;
     this.rollStart.copy(this.poseCmd);
     this.rollAxis.copy(axis);
     this.rollAngle = 0;
@@ -566,6 +654,8 @@ export class Locomotion {
     act.stiffnessMode = 'normal';
     act.orientation = null;
     this.rolling = false;
+    this.knockRoll = false;
+    this.knockQueue = 0;
     this.go('idle');
   }
 
@@ -649,9 +739,10 @@ export class Locomotion {
     switch (this.state) {
       case 'lieDown': {
         // 立ち姿から倒れる、または寝返りで転がる
-        act.uprightMin = LIE_POSTURE;
+        // （つつかれて転がるときは、途中で体が遅れて元の側へ戻らないよう、姿勢を強く保って回しきる）
+        act.uprightMin = this.knockRoll ? 1 : LIE_POSTURE;
         squashGoal = 0.95;
-        const done = this.rolling ? this.followRoll(dt) : this.followPose(dt, LIE_SPEED);
+        const done = this.rolling ? this.followRoll(dt) : this.followPose(dt, this.lieSpeed);
         if (done && this.proneAfterRoll) {
           // 横に転がって起きた：続けて前へ倒れて腹ばいになる
           this.proneAfterRoll = false;
@@ -659,6 +750,19 @@ export class Locomotion {
           this.reachedFor = 0;
           const f = this.forwardAxis(this.poseCmd);
           this.phaseTarget.setFromAxisAngle(Y_AXIS, Math.atan2(f.x, f.z)).multiply(lyingLocal('prone'));
+        } else if (done && this.knockRoll) {
+          // つつかれて転がり終えた：近い方の寝転びに落ち着く（転がした向きがほぼ立った向きなら立つ）。
+          // 体は指令に遅れて付いてくるので、判定は体でなく指令の向きで（前後に長い体型が背中を下にした仰向けから転がると、
+          // お腹が下＝立った向きになるが、その時点の体はまだ 40° ほど傾いていて、寝転びの側を選んで転がり戻っていた）
+          this.knockRoll = false;
+          this.rolling = false;
+          this.rollSpeed = ROLL_SPEED;
+          const cmdUp = this._v.set(0, 1, 0).applyQuaternion(this.poseCmd).y;
+          if (cmdUp > Math.cos(KNOCK_STAND)) {
+            this.knockQueue = 0;
+            this.riseGrace = RISE_GRACE;
+            this.go('recover');
+          } else this.fallOver();
         } else if (done) {
           this.rolling = false;
           this.go('lying');
@@ -668,7 +772,15 @@ export class Locomotion {
       }
       case 'lying': {
         act.uprightMin = LIE_POSTURE;
+        this.lieSpeed = LIE_SPEED;
         act.orientation = this.poseCmd;
+        // つつかれて、続けて転がる分が残っていれば転がる
+        if (this.knockQueue > 0) {
+          const rest = this.knockQueue;
+          this.knockQueue = 0;
+          this.knock(this.knockDir.x, this.knockDir.z, this.knockPower, rest);
+          break;
+        }
         // 行き先ができたら起き上がってから向かう
         if (this.hasTarget) this.getUp();
         break;
@@ -918,7 +1030,7 @@ export class Locomotion {
 
   /** 寝返り：水平な軸まわりに一定の角速度で 180° 転がす。転がり終えて体も追いついたら true */
   private followRoll(dt: number): boolean {
-    this.rollAngle = Math.min(this.rollTotal, this.rollAngle + ROLL_SPEED * dt);
+    this.rollAngle = Math.min(this.rollTotal, this.rollAngle + this.rollSpeed * dt);
     this._rq.setFromAxisAngle(this.rollAxis, this.rollSign * this.rollAngle);
     this.poseCmd.copy(this._rq).multiply(this.rollStart);
     if (this.rollAngle < this.rollTotal) return false;

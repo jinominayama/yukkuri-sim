@@ -69,7 +69,7 @@ yukkuri.drop(0.6);
 controls.target.set(0, yukkuri.height * 0.7, 0);
 camera.position.set(0, yukkuri.height * 0.85, 4.6);
 
-const view: ViewSettings = { timeScale: 1, paused: false, followCamera: true, freeCamera: false, pokeStrength: 3 };
+const view: ViewSettings = { timeScale: 1, paused: false, followCamera: true, freeCamera: false, pokeStrength: 3, slapStrength: 8 };
 // 開発中はコンソールから触れるようにする
 if (import.meta.env.DEV) {
   /** 描画ループと無関係に seconds 秒ぶん進めて1枚描く（検証用） */
@@ -91,7 +91,7 @@ if (import.meta.env.DEV) {
 }
 createDebugGui(yukkuri, view);
 
-// クリック（ドラッグではない）：体ならつつく、地面なら目的地にする
+// クリック（ドラッグではない）：体ならつつく（Shift を押しながらなら叩く）、地面なら目的地にする
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let downX = 0, downY = 0;
@@ -106,7 +106,8 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   raycaster.setFromCamera(pointer, camera);
   const hit = raycaster.intersectObject(yukkuri.bodyMesh, false)[0];
   if (hit) {
-    yukkuri.poke(hit.point, raycaster.ray.direction, view.pokeStrength);
+    if (e.shiftKey) yukkuri.slap(hit.point, raycaster.ray.direction, view.slapStrength);
+    else yukkuri.poke(hit.point, raycaster.ray.direction, view.pokeStrength);
     return;
   }
   const g = raycaster.intersectObject(ground, false)[0];

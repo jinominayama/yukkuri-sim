@@ -70,8 +70,8 @@ export class Yukkuri {
   readonly feeding: Feeding;
   /** うんうん（出したものは dropping.object をシーンに置いて表示する） */
   readonly dropping: Dropping;
-  /** つつかれたときの反応（へこんで弾む・驚いた顔） */
-  private readonly poking: Poke;
+  /** つつかれた・叩かれたときの反応（へこんで弾む・痛がる顔・倒れる・転がる） */
+  readonly poking: Poke;
   /** うんうんたいそう（歌に合わせて体を動かし、最後にうんうんを出す） */
   readonly exercise: Exercise;
   /** 吐餡（高い所から落ちたときなどに口から餡子を吐く。吐いたものは vomit.object をシーンに置いて表示する） */
@@ -252,6 +252,11 @@ export class Yukkuri {
   /** 点 point を方向 dir につつく（へこんで弾み、驚いた顔をする） */
   poke(point: THREE.Vector3, dir: THREE.Vector3, strength: number): void {
     this.poking.start(point, dir, strength);
+  }
+
+  /** 点 point を方向 dir に叩く（つつくより強くへこんで押し飛ばされ、痛がって泣く） */
+  slap(point: THREE.Vector3, dir: THREE.Vector3, strength: number): void {
+    this.poking.slap(point, dir, strength);
   }
 
   /** 外から全体に速度を加える（投げる・弾き飛ばす等） */

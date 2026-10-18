@@ -19,6 +19,8 @@ export interface ViewSettings {
   freeCamera: boolean;
   /** クリックでつつく強さ (m/s) */
   pokeStrength: number;
+  /** Shift＋クリックで叩く強さ (m/s) */
+  slapStrength: number;
 }
 
 /** 保存した値が消えるボタンを、2 回目の押下で実行するまでに待つ時間（秒） */
@@ -329,9 +331,17 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   const vomitTune = tune.addFolder('吐餡の起き方');
   noLock(vomitTune.add(y.vomit.params, 'fallHeight', 0.3, 3, 0.05).name('吐く落下の高さ(m)').onChange(saveVomit));
 
+  // つつく・叩く：倒れる・転がるまでの回数（全体で 1 つ。保存する）
+  const pokeTune = tune.addFolder('つつく・叩く');
+  const savePoke = () => y.poking.save();
+  noLock(pokeTune.add(y.poking.params, 'toppleHits', 1, 8, 0.5).name('立っていて倒れるまでの回数').onChange(savePoke));
+  noLock(pokeTune.add(y.poking.params, 'rollHits', 1, 8, 0.5).name('寝転んでいて転がるまでの回数').onChange(savePoke));
+  noLock(pokeTune.add(y.poking.params, 'slapWeight', 1, 4, 0.5).name('叩く1回はつつく何回分か').onChange(savePoke));
+
   // ---- 画面・カメラ ----
   const screen = gui.addFolder('画面・カメラ');
   screen.add(view, 'pokeStrength', 0, 8, 0.1).name('つつく強さ');
+  screen.add(view, 'slapStrength', 0, 12, 0.1).name('叩く強さ（Shift＋クリック）');
   screen.add(view, 'timeScale', 0.05, 2, 0.05).name('時間の速さ');
   screen.add(view, 'paused').name('一時停止');
   screen.add(view, 'followCamera').name('カメラ追従');
