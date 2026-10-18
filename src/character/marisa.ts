@@ -199,6 +199,15 @@ export const MARISA: CharacterDef = {
     hatScale: 1, hatX: 0, hatY: 0, hatZ: 0, hatTilt: 5, hatSide: 6, hairThickness: 0.035, braidLength: 0.75,
     hairParts: { bangs: 'spiky', side: 'cheek', back: 'bowl' },
   },
+  // 体型ごとに合わせた値。帽子の上下の位置は、もるんもるんでお尻を丸い玉にしたとき帽子のフリルに当たらないように。
+  // いもむし型は帽子を小さく、扁平型・ひよこ型は三つ編みを短く
+  presetDefaults: {
+    ball: { hatY: 0.04 },
+    chick: { hatY: 0.08, braidLength: 0.5 },
+    flat: { braidLength: 0.55 },
+    eggplant: { hatY: 0.01 },
+    caterpillar: { hatScale: 0.65, hatY: -0.03 },
+  },
   create(ctx, params) {
     return [
       new HairShell(ctx, marisaHair, params),

@@ -81,6 +81,8 @@ export interface CharacterDef {
   hairParts?: HairPartDef[];
   /** このキャラクターに合う調整値の初期値 */
   defaults?: Partial<OutfitParams>;
+  /** 体型ごとの初期値（体型 ID → defaults に重ねる値。帽子の位置など、体型で合わせた値） */
+  presetDefaults?: Record<string, Partial<OutfitParams>>;
   /** アクセサリーを作る */
   create(ctx: AttachContext, params: OutfitParams): Accessory[];
 }

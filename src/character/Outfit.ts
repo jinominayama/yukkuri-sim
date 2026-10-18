@@ -120,13 +120,14 @@ export class Outfit {
   copyFitTo(id: string): void {
     if (id === this.presetId) return;
     const fit = pickFit(this.params);
-    if (sameFit(fit, this.fitDefaults())) delete this.fits[id];
+    if (sameFit(fit, this.fitDefaults(id))) delete this.fits[id];
     else this.fits[id] = fit;
     this.save();
   }
 
-  private fitDefaults(): Fit {
-    return pickFit({ ...DEFAULT_OUTFIT, ...this.character.defaults });
+  /** 体型 id の初期値（キャラクターの初期値に、体型ごとの初期値を重ねたもの） */
+  private fitDefaults(id = this.presetId): Fit {
+    return pickFit({ ...DEFAULT_OUTFIT, ...this.character.defaults, ...this.character.presetDefaults?.[id] });
   }
 
   /**
