@@ -29,7 +29,7 @@ export function createHairPanel(parent: HTMLElement, outfit: Outfit): { rebuild(
     body.style.display = open ? '' : 'none';
     toggle.textContent = open ? '▾' : '▸';
   };
-  let open = true;
+  let open = false; // 最初は畳んでおく（見出しを押すと開く）
   setOpen(open);
   head.addEventListener('click', () => setOpen((open = !open)));
 

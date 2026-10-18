@@ -197,21 +197,23 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   moru.add({ f: () => y.moru.toggle() }, 'f').name('振る／やめる');
   noLock(moru.add(y.moru.params, 'face', { ランダム: 'random', ご機嫌: 'happy', 必死: 'desperate', 泣く: 'cry' }).name('顔')
     .onChange(() => { y.moru.save(); y.moru.refreshFace(); }));
+  // 数値の調整は折りたたんでおく（最初は閉じている）
+  const moruTune = moru.addFolder('数値の調整').close();
   // 左右の揺れ幅と尻を上げる角度は体型ごとに保存する（体型を切り替えるとその体型の値になるので、ロックは付けない）
-  noLock(moru.add(y.moru.params, 'wag', 0.05, MORU_WAG_MAX, 0.01).name('左右の揺れ幅').onChange(() => y.moru.setFit()));
-  noLock(moru.add(y.moru.params, 'lift', 15, 85, 1).name('尻を上げる角度(°)').onChange(() => y.moru.setFit()));
+  noLock(moruTune.add(y.moru.params, 'wag', 0.05, MORU_WAG_MAX, 0.01).name('左右の揺れ幅').onChange(() => y.moru.setFit()));
+  noLock(moruTune.add(y.moru.params, 'lift', 15, 85, 1).name('尻を上げる角度(°)').onChange(() => y.moru.setFit()));
   // お尻の玉（大きさ・寄せる位置）は、前後に長い体型（いもむし型）では使わない（調整のしかたが違うので別に作る）。その体型では欄を隠す
   const tailCtrls = [
-    moru.add(y.moru.params, 'domeSize', 0.6, 1.4, 0.01).name('お尻の玉の大きさ').onChange(() => y.moru.setFit()),
-    moru.add(y.moru.params, 'domeBack', -0.3, 0.8, 0.01).name('お尻の玉を寄せる位置').onChange(() => y.moru.setFit()),
+    moruTune.add(y.moru.params, 'domeSize', 0.6, 1.4, 0.01).name('お尻の玉の大きさ').onChange(() => y.moru.setFit()),
+    moruTune.add(y.moru.params, 'domeBack', -0.3, 0.8, 0.01).name('お尻の玉を寄せる位置').onChange(() => y.moru.setFit()),
   ];
   tailCtrls.forEach(noLock);
   showTailCtrls = () => tailCtrls.forEach((c) => c.show(!y.locomotion.isLongBody()));
   showTailCtrls();
   // 這うときに床に押し付けてつぶれる具合（全体で 1 つ保存する）
   const moruContact = () => { y.moru.applyContact(); y.moru.save(); };
-  noLock(moru.add(y.moru.params, 'contactSoft', 0.01, 1, 0.01).name('這うときの接地面の硬さ(倍)').onChange(moruContact));
-  noLock(moru.add(y.moru.params, 'press', 0, 20, 0.5).name('這うときの押し付け').onChange(moruContact));
+  noLock(moruTune.add(y.moru.params, 'contactSoft', 0.01, 1, 0.01).name('這うときの接地面の硬さ(倍)').onChange(moruContact));
+  noLock(moruTune.add(y.moru.params, 'press', 0, 20, 0.5).name('這うときの押し付け').onChange(moruContact));
 
   // ぺにぺに：出し入れはよく使うので「させる」に置く（形の設定は「見た目」→「ぺにぺに」）。体型ごとに保存する
   const peniDo = doGroup.addFolder('ぺにぺに');
