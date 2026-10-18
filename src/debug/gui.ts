@@ -388,5 +388,14 @@ function leftColumn(): HTMLElement {
     pointerEvents: 'none', zIndex: '1',
   } as Partial<CSSStyleDeclaration>);
   document.body.appendChild(el);
+  // 下端は左下の操作説明（二次創作の表記を含む）の上で止める（窓が低いと操作説明を覆ってしまう）。
+  // 操作説明は窓の幅で折り返して高さが変わるので、測って合わせる
+  const column = el;
+  const fit = () => {
+    const hud = document.getElementById('hud');
+    if (hud) column.style.bottom = `${window.innerHeight - hud.getBoundingClientRect().top + 6}px`;
+  };
+  fit();
+  window.addEventListener('resize', fit);
   return el;
 }

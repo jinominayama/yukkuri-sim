@@ -12,11 +12,13 @@
         font: 12px/1.5 system-ui, sans-serif; color: #8a7a6a;
         pointer-events: none; user-select: none;
       }
+      /* 東方Projectの二次創作であることの表記（公式ガイドラインで明記が求められている） */
+      #fanwork { color: #a89a8a; font-size: 11px; }
     </style>
   </head>
   <body>
     <div id="app"></div>
-    <div id="hud">左ドラッグ：回転 ／ 右ドラッグ：移動 ／ ホイール：拡大縮小 ／ Ctrl＋ドラッグ：地面の下まで回す<br>ゆっくりをクリック：つつく ／ Shift＋クリック：叩く ／ 地面をクリック：行き先を決める</div>
+    <div id="hud"><span id="fanwork">東方Projectの二次創作です（原作・上海アリス幻樂団様とは関係ありません）</span><br>左ドラッグ：回転 ／ 右ドラッグ：移動 ／ ホイール：拡大縮小 ／ Ctrl＋ドラッグ：地面の下まで回す<br>ゆっくりをクリック：つつく ／ Shift＋クリック：叩く ／ 地面をクリック：行き先を決める</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
