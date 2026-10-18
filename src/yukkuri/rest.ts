@@ -10,7 +10,7 @@ import type { Yukkuri } from './Yukkuri';
  *   眠る … 立った姿勢で眠る（寝転がっていれば起き上がってから）。目を閉じ、ゆっくり大きく呼吸して「すーやすーや」。
  *          起こすまで眠り続ける。起こす：ボタン・つつく・叩く・ほかの動き（食べる・うんうんなど）・行き先の指示・体勢の指示
  *   気絶 … どの姿勢でもその場で気絶する（立っていても寝転がっていても、そのままの姿勢）。目を×かぐるぐるにし、よだれを垂れ流して動かなくなり、
- *          しばらくすると気がつく。数秒ごとに不定期にビクッと痙攣する。気絶している間はつつかれても顔は変わらず、ほかの動きも始めない
+ *          しばらくすると気がつき、寝転がって（倒れて）いたら起き上がる。数秒ごとに不定期にビクッと痙攣する。気絶している間はつつかれても顔は変わらず、ほかの動きも始めない
  */
 export interface RestParams {
   /** 眠っているときの柔らかさ（形に戻る強さに掛ける倍率。小さいほど柔らかい） */
@@ -49,6 +49,8 @@ const TWITCH_RADIUS = 0.9;
 const TWITCH_TREMBLE = 0.03;
 /** 起き上がるのを待つ上限（秒） */
 const WAIT_MAX = 12;
+/** 気がついてから起き上がるまでの間（秒。寝転がって気絶していたとき。我に返ってから起きる） */
+const GETUP_DELAY = 1.2;
 /** 目を覚ました・気がついたときの顔を出しておく時間（秒） */
 const AWAKE_FACE_TIME = 1.8;
 
@@ -104,6 +106,8 @@ export class Rest {
   private twitchIn = 0;
   private jerksLeft = 0;
   private jerkIn = 0;
+  /** 気がついた後、起き上がるまでの残り時間（秒。負なら起き上がる予定なし） */
+  private getUpIn = -1;
   private word: Word | null = null;
   private readonly after: AfterFace;
 
@@ -199,6 +203,8 @@ export class Rest {
     y.locomotion.release();
     this.word = sayAbove(y, this.word, pick(COME_TO_WORDS), 2.2);
     this.after.show(FACE_COME_TO);
+    // 寝転がって（倒れて）いたら、少し間を置いてから起き上がる
+    this.getUpIn = y.locomotion.isLying ? GETUP_DELAY : -1;
   }
 
   /** 固定時間刻みで呼ぶ */
@@ -231,6 +237,12 @@ export class Rest {
           this.word = sayAbove(y, this.word, pick(SNORE_WORDS), 2.6, 0.2);
         }
         break;
+    }
+    if (this.getUpIn >= 0) {
+      this.getUpIn -= dt;
+      // その間にほかの動きを始めた・また気絶した・眠ったなら任せる
+      if (this.active || this.othersBusy()) this.getUpIn = -1;
+      else if (this.getUpIn < 0) y.getUp();
     }
     if (this.fainted) this.twitch(dt);
     if (this.fainted && this.t > this.params.faintTime) this.comeTo();
