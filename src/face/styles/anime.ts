@@ -64,6 +64,12 @@ type Pt = [number, number];
  * 参考画像に合わせたアニメ調の絵柄。
  * 他の絵柄はこのクラスを継承し、変えたいパーツのメソッドだけ上書きする（simple.ts を参照）
  */
+/**
+ * ぷくーの口の形（半分の長さ・口の端から頬の弧まで・弧の半分の高さ・弧の張り出し・弧の上下のずれ・口の真ん中の上がり・
+ * 口の波・太さ・弧の端の太さ。単位は口の幅）。5 案ずつ 2 回描いて選んだもの（指示：横に結んだ口と頬の輪郭、力を込めて頬の縦線を長く）
+ */
+const POUT = { half: 0.32, gap: 0.05, arcH: 0.34, bulge: 0.07, arcUp: 0.04, sag: 0.06, wave: 0, lineW: 1.6, arcW: 1.4, tip: 0.1 };
+
 export class AnimeStyle implements FaceStyle {
   id = 'anime';
   name = 'アニメ調';
@@ -632,7 +638,43 @@ export class AnimeStyle implements FaceStyle {
       case 'wail': this.mouthWail(ctx, open, width); break;
       case 'grit': this.mouthGrit(ctx, width); break;
       case 'vomit': this.mouthVomit(ctx, open, width); break;
+      case 'pout': this.mouthPout(ctx, width); break;
       case 'none': break;
+    }
+  }
+
+  /**
+   * 口をすぼめる（ぷくー）：横に結んだ口と、その両端の外で押し合う左右の頬の輪郭線「)—(」。
+   * 左の頬は右がふくらんだ「)」、右の頬は左がふくらんだ「(」の短い弧で、上下の端は細く抜く。
+   * 口は真ん中が少し上がったへの字で太く、頬の弧は上下へ長く伸ばして力を込めた感じにする（POUT）
+   */
+  protected mouthPout(ctx: CanvasRenderingContext2D, width = 1): void {
+    const v = POUT;
+    const W = this.layout.mouthW * 2.4 * width;
+    const y = this.layout.mouthY;
+    this.droolFrom = [v.half * 0.6 * W, y - 0.05 * W];
+    const lw = this.lineWidth;
+    ctx.fillStyle = this.palette.line;
+    // 口：横一文字（wave で少し波打たせる）。端は抜く
+    const line: Pt[] = [];
+    for (let i = 0; i <= 12; i++) {
+      const u = i / 12;
+      const x = (-1 + 2 * u) * v.half;
+      line.push([x * W, y + (v.sag * (1 - (2 * u - 1) ** 2) + v.wave * Math.sin(u * Math.PI * 2)) * W]);
+    }
+    this.strokeVar(ctx, line, lw * 0.4, lw * v.lineW, lw * 0.4);
+    // 頬の輪郭：口の端の外に、口から離れる向きへふくらむ短い弧（左は「)」、右は「(」）
+    for (const s of [-1, 1]) {
+      const cx = s * (v.half + v.gap);
+      const arc: Pt[] = [];
+      for (let i = 0; i <= 10; i++) {
+        const u = i / 10;
+        const yy = (1 - 2 * u) * v.arcH;
+        // 真ん中ほど口の側（内側）へ張り出す
+        const bulge = v.bulge * (1 - (2 * u - 1) ** 2);
+        arc.push([(cx - s * bulge) * W, y + (yy + v.arcUp) * W]);
+      }
+      this.strokeVar(ctx, arc, lw * v.tip, lw * v.arcW, lw * v.tip);
     }
   }
 

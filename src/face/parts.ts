@@ -87,6 +87,7 @@ export const PARTS: PartDef[] = [
       { id: 'grit', name: '食いしばり', value: { mouth: { kind: 'grit' } } },
       { id: 'grin', name: '歯見せ笑い', value: { mouth: { kind: 'grin' } } },
       { id: 'vomit', name: '吐く', value: { mouth: { kind: 'vomit' } } },
+      { id: 'pout', name: 'ぷくー', value: { mouth: { kind: 'pout' } } },
       { id: 'none', name: 'なし', value: { mouth: { kind: 'none' } } },
     ],
   },

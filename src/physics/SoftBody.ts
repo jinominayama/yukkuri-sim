@@ -114,6 +114,13 @@ export class SoftBody {
      * （頭・顔の側は動かさない）。お尻がとがらず、まんまるの大きな玉になる（もるんもるん）
      */
     tailDome: 0,
+    /**
+     * 体をふくらませる量（0 でそのまま。ぷくー）。全体を大きくし、下半分ほど左右・前後に張り出させる（下ぶくれ）。
+     * 底は地面に付けたまま上へ伸ばす。ふくらんだ分だけ体積も増やす
+     */
+    inflate: 0,
+    /** ふくらませるとき、下半分を余分に張り出させる割合（0 で全体を同じだけ） */
+    inflateWide: 0,
     /** 玉の大きさ（静止形状の平均半径に対する比） */
     tailDomeSize: 1,
     /** 玉の中心を後ろへ寄せる量（静止形状の平均半径に対する比。体の後ろ向き＝前へ倒した体では上かつ後ろ） */
@@ -174,6 +181,8 @@ export class SoftBody {
   private domeKey = '';
   /** お尻を玉に寄せきったときの体積の、静止形状に対する比 */
   private domeVolume = 1;
+  /** ふくらませた目標の形の体積の、静止形状に対する比（ぷくー） */
+  private inflateVolume = 1;
   private restYMin = 0;
   private restYMax = 0;
   /** actuation を反映した目標形状（ローカル、重心が原点）とその前後の範囲 */
@@ -272,6 +281,7 @@ export class SoftBody {
     for (let i = 0; i < this.n * 3; i += 3) rSum += Math.hypot(this.rest[i], this.rest[i + 1], this.rest[i + 2]);
     this.restRadius = rSum / Math.max(1, this.n);
     this.domeKey = ''; // 形が変わったので、お尻の玉の動きも作り直す
+    this.inflateKey = '';
     this.updateActuatedShape();
   }
 
@@ -379,6 +389,26 @@ export class SoftBody {
     }
   }
 
+  /** ふくらませた静止形状の体積の比（量が変わったときだけ測り直す） */
+  private inflateVolumeAt(inflate: number, wide: number): number {
+    const key = inflate.toFixed(3) + ',' + wide.toFixed(3);
+    if (key === this.inflateKey) return this.inflateVolume;
+    this.inflateKey = key;
+    const { rest, n } = this;
+    const y0 = this.restYMin;
+    const H = Math.max(this.restYMax - y0, 1e-6);
+    const p = this.inflateTmp.length === n * 3 ? this.inflateTmp : (this.inflateTmp = new Float32Array(n * 3));
+    for (let i = 0; i < n * 3; i += 3) {
+      const [kx, kz] = inflateAt((rest[i + 1] - y0) / H, inflate, wide);
+      p[i] = rest[i] * kx;
+      p[i + 1] = y0 + (rest[i + 1] - y0) * (1 + inflate * INFLATE_UP);
+      p[i + 2] = rest[i + 2] * kz;
+    }
+    return this.volume(p) / Math.max(this.restVolume, 1e-9);
+  }
+  private inflateKey = '';
+  private inflateTmp = new Float32Array(0);
+
   /**
    * お尻を丸い玉に寄せる動き（頂点ごと、静止形状の座標で）。
    *   1. 玉の中心から見て、体の表面が玉より内側にある所だけ玉の表面まで押し出す（玉と体を「なめらかに足し合わせた」形。
@@ -463,6 +493,8 @@ export class SoftBody {
     const dome = act.tailDome;
     // 玉に寄せたぶんの動き（頂点ごと。大きさ・位置が変わったときだけ作り直し、寄せる量 dome を掛けて使う）
     const dd = dome > 1e-5 ? this.domeShape(act.tailDomeSize, act.tailDomeBack) : null;
+    const inflate = Math.max(0, act.inflate);
+    const wide = act.inflateWide;
 
     let gzMin = Infinity, gzMax = -Infinity;
     for (let i = 0; i < n * 3; i += 3) {
@@ -474,6 +506,13 @@ export class SoftBody {
         rx += dd[i] * dome;
         ry += dd[i + 1] * dome;
         rz += dd[i + 2] * dome;
+      }
+      // ふくらませる：下半分（高さ 35% あたりが一番）ほど横と前後へ張り出し、上へは控えめに伸ばす（底は地面に付けたまま）
+      if (inflate > 1e-5) {
+        const [kx, kz] = inflateAt(t, inflate, wide);
+        rx *= kx;
+        rz *= kz;
+        ry = y0 + (ry - y0) * (1 + inflate * INFLATE_UP);
       }
       g[i] = rx * sx;
       g[i + 1] = ry * sy - bend * 0.45 * H * sy * t2;
@@ -597,10 +636,16 @@ export class SoftBody {
     this.goalFront.set(g[fi], g[fi + 1], g[fi + 2]);
     this.goalRear.set(g[ri], g[ri + 1], g[ri + 2]);
 
+    // ふくらませた形の体積（ふくらませ以外の変形はおおむね体積を保つので、ふくらませだけを測る）
+    if (inflate > 1e-5) {
+      const k = 1 + inflate;
+      this.inflateVolume = this.inflateVolumeAt(inflate, wide);
+      if (!Number.isFinite(this.inflateVolume)) this.inflateVolume = k * k * (1 + inflate * INFLATE_UP);
+    }
     // 何も変形していなければ、皮の基準の長さは静止形状のまま（お尻の玉も変形に数える。数え忘れると、お尻を左右に振って
     // 真ん中を通る瞬間だけ皮が元の形に引っ張られ、カクッと動いた）
     const identity = Math.abs(sy - 1) + Math.abs(st - 1) + Math.abs(bend) + Math.abs(side) + Math.abs(tail) + Math.abs(arch)
-      + (dd ? dome : 0) < 1e-4;
+      + (dd ? dome : 0) + inflate < 1e-4;
     if (identity) {
       edgeTarget.set(edgeLen);
       return;
@@ -662,7 +707,8 @@ export class SoftBody {
     if (wsum === 0) return;
     // お尻を玉に寄せている間は、玉で増えた分だけ体積も増やす（静止時の体積のままだと、膨らませた目標の形と押し合ってしわが寄る）
     const dome = this.actuation.tailDome > 1e-5 ? 1 + (this.domeVolume - 1) * this.actuation.tailDome : 1;
-    const C = vol - this.restVolume * this.volumeScale * dome;
+    const inflated = this.actuation.inflate > 1e-5 ? this.inflateVolume : 1;
+    const C = vol - this.restVolume * this.volumeScale * dome * inflated;
     const lambda = -C / (wsum + alpha) / 6;
     for (let i = 0; i < n; i++) {
       const w = invMass[i] * lambda;
@@ -892,6 +938,21 @@ const CONTACT_HEIGHT = 0.3;
 const CONTACT_FACE_FROM = 0.62;
 const CONTACT_FACE_TO = 0.8;
 /** お尻を丸い玉に寄せる範囲：静止形状の前端から測って、この割合の所から寄せ始め、TO より後ろは丸ごと寄せる */
+/** ふくらませるとき、一番張り出す高さ（底 0〜頭頂 1）と、その広がり、上への伸びの割合 */
+const INFLATE_WIDE_AT = 0.35;
+const INFLATE_WIDE_SPAN = 0.4;
+const INFLATE_UP = 0.6;
+/** ふくらませるとき、頭（高さ INFLATE_HEAD_FROM〜TO）は横へ広げるのを弱める（帽子のかぶる所が太ると、帽子が食い込みを避けて浮く） */
+const INFLATE_HEAD_FROM = 0.5;
+const INFLATE_HEAD_TO = 0.95;
+const INFLATE_HEAD_KEEP = 0.25;
+
+/** ふくらませるときの、高さ t（底 0〜頭頂 1）での横・前後の倍率 */
+function inflateAt(t: number, inflate: number, wide: number): [number, number] {
+  const low = Math.exp(-(((t - INFLATE_WIDE_AT) / INFLATE_WIDE_SPAN) ** 2));
+  const base = 1 - (1 - INFLATE_HEAD_KEEP) * smoothstep(INFLATE_HEAD_FROM, INFLATE_HEAD_TO, t);
+  return [1 + inflate * (base + wide * low), 1 + inflate * (base + wide * low * 0.7)];
+}
 const TAIL_DOME_FROM = 0.3;
 const TAIL_DOME_TO = 0.75;
 /** お尻の玉：体と玉の境目をなめらかにつなぐ幅（静止形状の平均半径に対する比）と、隣どうしでならす回数 */

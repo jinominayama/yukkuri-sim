@@ -19,6 +19,7 @@ import { Moru } from './moru';
 import { Stress } from './stress';
 import { Flee } from './flee';
 import { Rest } from './rest';
+import { Puku } from './puku';
 import { TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
@@ -89,6 +90,10 @@ export class Yukkuri {
   readonly flee: Flee;
   /** 眠る・気絶（体を柔らかくする） */
   readonly rest: Rest;
+  /** ぷくー（体をふくらませて威嚇する） */
+  readonly puku: Puku;
+  /** 見ている人（カメラ）の位置。ぷくーでその方を向く。main が渡す */
+  viewer: THREE.Vector3 | null = null;
   /** 呼吸の大きさ・速さの倍率（眠っている間は大きくゆっくり。設定の値に掛ける） */
   breathGain = 1;
   breathSlow = 1;
@@ -154,6 +159,8 @@ export class Yukkuri {
     this.stress = new Stress(this);
     this.flee = new Flee(this);
     this.rest = new Rest(this);
+    this.puku = new Puku(this);
+    this.puku.usePreset(this.presetId);
     this.peni = new Peni(this);
     this.peni.usePreset(this.presetId);
     this.root.add(this.peni.object);
@@ -196,6 +203,7 @@ export class Yukkuri {
     this.peni.usePreset(p.id); // ぺにぺにの設定も体型ごと
     this.dropping.usePreset(p.id); // うんうんの出る位置も体型ごと
     this.moru.usePreset(p.id); // もるんもるんの揺れ幅も体型ごと
+    this.puku.usePreset(p.id); // ぷくーの大きさも体型ごと
     this.locomotion.reset();
     this.applyShape();
     this.drop(0.02);
@@ -308,6 +316,7 @@ export class Yukkuri {
     this.stress.update(dt); // 上限に届いたら吐き始めるので、吐餡より先に
     this.flee.update(dt); // 汚れが近いかはストレスが調べる
     this.rest.update(dt); // 眠る・気絶（ほかの動きが始まったら起こすので、それらの後の判断で足りる）
+    this.puku.update(dt); // ぷくー（身ぶりの向きを移動の処理より先に指示する）
     this.vomit.update(dt); // 吐くときの身ぶりも移動の処理より先に指示する
     this.exercise.update(dt); // 体操の身ぶりを移動の処理より先に指示する
     this.locomotion.update(dt, this.physics.gravity);

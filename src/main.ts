@@ -89,6 +89,7 @@ if (import.meta.env.DEV) {
   };
   Object.assign(window, { yukkuri, view, camera, controls, advance, snap, scene, THREE });
 }
+yukkuri.viewer = camera.position; // ぷくーでカメラの方を向く（同じ物を渡すので、カメラが動けば追う）
 createDebugGui(yukkuri, view);
 
 // クリック（ドラッグではない）：体ならつつく（Shift を押しながらなら叩く）、地面なら目的地にする

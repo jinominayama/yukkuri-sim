@@ -107,6 +107,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
         y.peni.copyTo(USER_PRESET_ID); // ぺにぺにの設定も
         y.dropping.copyExitTo(USER_PRESET_ID); // うんうんの出る位置も
         y.moru.copyFitTo(USER_PRESET_ID); // もるんもるんの揺れ幅・角度も
+        y.puku.copyFitTo(USER_PRESET_ID); // ぷくーの大きさ・下ぶくれ具合も
       }
       showInfo(presetState.id, ok ? `現在の値（${from}）をユーザー設定に上書きしました。` : '保存できませんでした（保存領域が使えません）。');
     });
@@ -123,6 +124,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       y.peni.reset();
       y.dropping.resetExit();
       y.moru.resetFit();
+      y.puku.resetFit();
       applyPreset(presetState.id);
     });
   showInfo(y.presetId);
@@ -214,6 +216,18 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   const moruContact = () => { y.moru.applyContact(); y.moru.save(); };
   noLock(moruTune.add(y.moru.params, 'contactSoft', 0.01, 1, 0.01).name('這うときの接地面の硬さ(倍)').onChange(moruContact));
   noLock(moruTune.add(y.moru.params, 'press', 0, 20, 0.5).name('這うときの押し付け').onChange(moruContact));
+
+  // ぷくー：体をふくらませて威嚇する（ボタンで始める。もう一度押すとしぼむ）
+  const puku = doGroup.addFolder('ぷくー');
+  puku.add({ f: () => y.puku.toggle() }, 'f').name('ぷくーする／やめる');
+  noLock(puku.add(y.puku.params, 'face', { ランダム: 'random', ぎゅっ: 'squeeze', にらむ: 'glare', すまし: 'calm' }).name('顔')
+    .onChange(() => { y.puku.save(); y.puku.refreshFace(); }));
+  noLock(puku.add(y.puku.params, 'faceCamera').name('カメラの方を向く').onChange(() => y.puku.save()));
+  const pukuTune = puku.addFolder('数値の調整').close();
+  noLock(pukuTune.add(y.puku.params, 'time', 2, 30, 0.5).name('ふくらんでいる時間(秒)').onChange(() => y.puku.save()));
+  // 大きさと下ぶくれ具合は体型ごとに保存する（体型を切り替えるとその体型の値になるので、ロックは付けない）
+  noLock(pukuTune.add(y.puku.params, 'size', 0.05, 0.6, 0.01).name('ふくらむ大きさ').onChange(() => y.puku.setFit()));
+  noLock(pukuTune.add(y.puku.params, 'wide', 0, 1.5, 0.01).name('下ぶくれ具合').onChange(() => y.puku.setFit()));
 
   // ぺにぺに：出し入れはよく使うので「させる」に置く（形の設定は「見た目」→「ぺにぺに」）。体型ごとに保存する
   const peniDo = doGroup.addFolder('ぺにぺに');
