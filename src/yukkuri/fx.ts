@@ -101,6 +101,11 @@ export function showFace(y: Yukkuri, face: Partial<PartSelection>, atLeast: Part
   y.face.override = out;
 }
 
+/** 一覧からどれか 1 つ（発言のパターンを選ぶ） */
+export function pick<T>(list: readonly T[]): T {
+  return list[Math.floor(Math.random() * list.length)];
+}
+
 /**
  * 体の前の向き（水平）。体の向き（Y 軸まわり）から求める。
  * 体を大きく傾けているとき（腹ばいでお尻を突き上げるなど）は顔がほぼ真下・真上を向き、
