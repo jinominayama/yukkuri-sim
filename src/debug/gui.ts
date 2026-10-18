@@ -124,8 +124,8 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
 
   // パネルは目的ごとに 5 つの大見出しにまとめる：
   //   体型プリセット … 体型の切り替え・保存・初期化
-  //   させる         … 動き・体勢・ごはん・うんうん・吐餡など、押して動かすボタン（押したときの種類の指定も隣に置く）
-  //   見た目         … 顔・キャラクター・ぺにぺに・体の形・塗り・輪郭線
+  //   させる         … 動き・体勢・ごはん・うんうん・吐餡・もるんもるんなど、押して動かすボタン（押したときの種類の指定も隣に置く）と、ぺにぺにの出し入れ
+  //   見た目         … 顔・キャラクター・ぺにぺにの形・体の形・塗り・輪郭線
   //   動きの調整     … 移動・柔らかさ・呼吸・うんうんの出る位置・吐餡の起き方
   //   画面・カメラ   … つつく強さ・時間・カメラ
   // 小見出しの名前はロックの保存名に使う。変えたら locks.ts の RENAMED に足して、前にロックした値を引き継ぐ
@@ -181,6 +181,10 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(moru.add(y.moru.params, 'wag', 0.05, MORU_WAG_MAX, 0.01).name('左右の揺れ幅').onChange(() => y.moru.setFit()));
   noLock(moru.add(y.moru.params, 'lift', 15, 85, 1).name('尻を上げる角度(°)').onChange(() => y.moru.setFit()));
 
+  // ぺにぺに：出し入れはよく使うので「させる」に置く（形の設定は「見た目」→「ぺにぺに」）。体型ごとに保存する
+  const peniDo = doGroup.addFolder('ぺにぺに');
+  noLock(peniDo.add(y.peni.params, 'show').name('出す').onChange(() => y.peni.save()));
+
   // ---- 見た目 ----
   const looks = gui.addFolder('見た目');
 
@@ -224,11 +228,10 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(chara.add(outfit.params, 'hairThickness', 0, 0.1, 0.001).name('髪の厚み').onChange(rebuildOutfit));
   noLock(chara.add(outfit.params, 'braidLength', 0.35, 1, 0.01).name('三つ編みの長さ').onChange(rebuildOutfit));
 
-  // ぺにぺに：顔の正面の下に生える円錐
+  // ぺにぺに：顔の正面の下に生える円錐の形（出し入れは「させる」→「ぺにぺに」）
   // 設定は体型ごとに保存する（体型を切り替えるとその体型の設定になるので、ロックは付けない）
   const peni = looks.addFolder('ぺにぺに');
   const savePeni = () => y.peni.save();
-  noLock(peni.add(y.peni.params, 'show').name('出す').onChange(savePeni));
   noLock(peni.add(y.peni.params, 'at', 0, 1, 0.01).name('位置（口の下〜地面）').onChange(savePeni));
   noLock(peni.add(y.peni.params, 'length', 0.05, 0.6, 0.01).name('長さ').onChange(savePeni));
   noLock(peni.add(y.peni.params, 'radius', 0.02, 0.2, 0.005).name('太さ').onChange(savePeni));
