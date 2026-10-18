@@ -6,6 +6,11 @@
 「東方Project」の二次創作です。原作（上海アリス幻樂団）とは関係のない、個人のファン活動として作っています。
 東方Projectの[二次創作ガイドライン](https://touhou-project.news/guideline/)に沿って、無料で公開します。
 
+## ダウンロード（遊ぶ人向け）
+
+[BOOTH（無料）](https://jinominayama.booth.pm/items/9005769) で配布しています。商品ページは年齢確認があります。
+プログラム（コード）は AI（Anthropic の Claude）を使って書いています。画像生成 AI は使っていません。
+
 Three.js + TypeScript + Vite。最終的に Tauri でデスクトップアプリ化する予定。
 
 ## 起動（開発）
