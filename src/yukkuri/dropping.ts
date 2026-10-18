@@ -304,6 +304,15 @@ export class Dropping {
     return false;
   }
 
+  /** 出したものの道筋の点（水平）を順に渡す。出している最中のものと、体の中に隠れている根元は数えない */
+  forEachPoint(f: (x: number, z: number) => void): void {
+    for (const p of this.piles) {
+      if (p === this.current) continue;
+      const from = p.detached >= 0 ? p.exitS : p.ground;
+      for (let i = 0; i < p.pts.length; i += 2) if (p.len[i] >= from) f(p.pts[i].x, p.pts[i].z);
+    }
+  }
+
   /** 出したものを全部片付ける（出している最中ならそこでやめる） */
   clear(): void {
     if (this.active) this.finish();

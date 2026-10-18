@@ -256,6 +256,8 @@ export class Locomotion {
   wagSide = 1;
   /** 動けない間に指示された行き先がある（target に入っている） */
   deferred = false;
+  /** 移動方法を一時的に差し替える（汚れから離れるときなど。null で設定どおり。もるんもるん中はそちらが優先） */
+  modeOverride: MoveMode | null = null;
   private state: State = 'idle';
   private t = 0;
   private airborne = false;
@@ -1040,8 +1042,9 @@ export class Locomotion {
   }
 
   private moveState(): State {
-    if (this.moru || this.params.mode === 'moru') return 'moru';
-    return this.params.mode === 'hop' && this.params.canHop ? 'crouch' : 'crawl';
+    const mode = this.modeOverride ?? this.params.mode;
+    if (this.moru || mode === 'moru') return 'moru';
+    return mode === 'hop' && this.params.canHop ? 'crouch' : 'crawl';
   }
 
   /**

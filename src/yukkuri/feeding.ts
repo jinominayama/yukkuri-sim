@@ -4,13 +4,14 @@ import { createAccessoryOutlineMaterial } from '../render/outlineMaterial';
 import { withOutline } from '../character/shapes';
 import type { PartSelection } from '../face/parts';
 import { faceFrame, showFace } from './fx';
+import { DEFAULT_FOOD, type FoodKind } from './foods';
 import type { Yukkuri } from './Yukkuri';
 
 /**
  * 物を食べる動き。リアルな咀嚼ではなく、段階ごとに表情と演出を切り替える：
  *   1. 見つめる … 食べ物の前で目を見開いて口を開け、よだれを少し垂らす
  *   2. 食べる   … 口を閉じる・開くを繰り返し、口のまわりに食べかす、まわりに「むーしゃ」の文字
- *   3. しあわせ … 食べ物を消し、涙を流して震えながら「しあわせー」の文字
+ *   3. しあわせ … 食べ物を消し、涙を流して震えながら「しあわせー」の文字。食べ物の品質に応じてストレスが減る
  * 表情は顔の設定を書き換えずに一時的に上書きする（終わればいつもの顔に戻る）。
  * 食べている間は、うろつき・移動をしない
  */
@@ -55,6 +56,8 @@ export class Feeding {
   private phase: Phase = 'none';
   private t = 0;
   private chews = 0;
+  /** 今食べている食べ物の種類 */
+  private kind: FoodKind = DEFAULT_FOOD;
   private food: THREE.Group | null = null;
   private readonly foodGeometry: THREE.BufferGeometry;
   private readonly crumbGeometry: THREE.BufferGeometry;
@@ -86,10 +89,11 @@ export class Feeding {
   }
 
   /** 食べ物を目の前に置いて食べ始める。寝転がっていれば起き上がってから。食べている最中なら何もしない */
-  start(): boolean {
+  start(kind: FoodKind = DEFAULT_FOOD): boolean {
     if (this.active || this.y.dropping.active || this.y.exercise.active || this.y.vomit.active) return false;
     const loco = this.y.locomotion;
     loco.hold();
+    this.kind = kind;
     this.t = 0;
     // 寝転がっていれば起き上がってから。跳ねている途中など体勢が変わっている途中なら、止まるまで待つ
     // （途中の向きで食べ物を置くと、顔の正面からずれる）
@@ -140,6 +144,7 @@ export class Feeding {
           this.removeFood();
           this.show(FACE_HAPPY, AT_LEAST_HAPPY);
           this.say('しあわせー', true);
+          this.y.stress.ate(this.kind.quality);
         }
         break;
       }

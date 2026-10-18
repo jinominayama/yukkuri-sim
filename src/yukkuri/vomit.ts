@@ -244,7 +244,28 @@ export class Vomit {
     this.turned = false;
     const f = this.params.face;
     this.shockFace = f === 'random' ? Math.random() < 0.5 : f === 'shock';
+    y.stress.vomited(); // 吐くとストレスが半分に減る（落ちた・ためすぎた・ボタン、どれでも）
     return true;
+  }
+
+  /** 床に着いた塊の位置（水平）を順に渡す。吐いている最中のものは数えない */
+  forEachPoint(f: (x: number, z: number) => void): void {
+    for (const h of this.heaps) {
+      if (h === this.current && this.active) continue;
+      for (const l of h.lumps) if (l.rest >= 0) f(l.p.x, l.p.z);
+    }
+  }
+
+  /** 吐いたもの（床に着いた塊）のどれかが、水平に見て点 c から radius 以内にあるか。吐いている最中のものは数えない */
+  near(c: THREE.Vector3, radius: number): boolean {
+    for (const h of this.heaps) {
+      if (h === this.current && this.active) continue;
+      for (const l of h.lumps) {
+        if (l.rest < 0) continue;
+        if (Math.hypot(l.p.x - c.x, l.p.z - c.z) < radius + l.r) return true;
+      }
+    }
+    return false;
   }
 
   /** 吐いたものを全部片付ける（吐いている最中ならそこでやめる） */

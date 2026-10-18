@@ -175,6 +175,7 @@ export class Poke {
     const shove = this.velocity.clone().setY(0).multiplyScalar(slap ? SLAP_SHOVE : SHOVE);
     y.body.addVelocity(shove.x, 0, shove.z);
     this.hits += slap ? SLAP_HITS : 1;
+    y.stress.add(slap ? y.stress.params.slap : y.stress.params.poke);
     // 押された量をためて、届いたら倒れる（立っているとき）・転がる（寝転んでいるとき）
     this.knockOver(slap, strength);
     if (slap) {

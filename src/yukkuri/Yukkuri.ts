@@ -16,6 +16,8 @@ import { Exercise } from './exercise';
 import { Poke } from './poke';
 import { Vomit } from './vomit';
 import { Moru } from './moru';
+import { Stress } from './stress';
+import { Flee } from './flee';
 import { TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
@@ -80,6 +82,10 @@ export class Yukkuri {
   readonly moru: Moru;
   /** ぺにぺに（顔の正面の下に生える円錐） */
   readonly peni: Peni;
+  /** ストレス（つつかれる・叩かれる・汚れの近くにいるとたまり、上限で吐餡する） */
+  readonly stress: Stress;
+  /** 汚れ（うんうん・吐いた餡子）の近くにいると、嫌がって離れる */
+  readonly flee: Flee;
   /** まわりに出す文字（texts.object をシーンに置いて表示する） */
   readonly texts = new TextFx();
   /** 起き上がる前に寝返りで横へずれている最中か、と、あと何回寝返ってよいか */
@@ -138,6 +144,8 @@ export class Yukkuri {
     this.vomit = new Vomit(this);
     this.moru = new Moru(this);
     this.moru.usePreset(this.presetId);
+    this.stress = new Stress(this);
+    this.flee = new Flee(this);
     this.peni = new Peni(this);
     this.peni.usePreset(this.presetId);
     this.root.add(this.peni.object);
@@ -287,6 +295,8 @@ export class Yukkuri {
     // 寝返りで横へずれてから起き上がる：寝返りが終わったら、まだ塊に近ければもう一度、離れていれば起き上がる
     if (this.rollingAside && this.locomotion.resting) this.getUp();
     this.watchFall();
+    this.stress.update(dt); // 上限に届いたら吐き始めるので、吐餡より先に
+    this.flee.update(dt); // 汚れが近いかはストレスが調べる
     this.vomit.update(dt); // 吐くときの身ぶりも移動の処理より先に指示する
     this.exercise.update(dt); // 体操の身ぶりを移動の処理より先に指示する
     this.locomotion.update(dt, this.physics.gravity);

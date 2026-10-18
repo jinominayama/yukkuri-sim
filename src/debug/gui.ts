@@ -174,6 +174,16 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(vomit.add(y.vomit.params, 'face', { ランダム: 'random', 白目: 'shock', 泣く: 'cry' }).name('顔').onChange(saveVomit));
   vomit.add({ f: () => y.vomit.clear() }, 'f').name('片付ける');
 
+  // ストレス：つつく・叩く・汚れの近くでたまり、上限で吐餡する（吐くと半分）。今の値を見る・いちばん低くする（下限のある体型は下限まで）
+  const stressDo = doGroup.addFolder('ストレス');
+  const stressView = { value: '' };
+  stressDo.add(stressView, 'value').name('今のストレス').disable().listen();
+  setInterval(() => {
+    const s = y.stress;
+    stressView.value = `${s.value.toFixed(1)} / ${s.params.limit}${s.near ? '（汚れが近い）' : ''}`;
+  }, 100);
+  stressDo.add({ f: () => y.stress.reset() }, 'f').name('いちばん低くする');
+
   // もるんもるん：お尻を突き上げて左右に振る。振っている間に地面をクリックすると、そのまま這って行く
   const moru = doGroup.addFolder('もるんもるん');
   moru.add({ f: () => y.moru.toggle() }, 'f').name('振る／やめる');
@@ -330,6 +340,19 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
 
   const vomitTune = tune.addFolder('吐餡の起き方');
   noLock(vomitTune.add(y.vomit.params, 'fallHeight', 0.3, 3, 0.05).name('吐く落下の高さ(m)').onChange(saveVomit));
+
+  // ストレスのたまり方（全体で 1 つ。保存する）
+  const stressTune = tune.addFolder('ストレスのたまり方');
+  const saveStress = () => y.stress.save();
+  noLock(stressTune.add(y.stress.params, 'limit', 10, 300, 1).name('吐餡するストレス').onChange(saveStress));
+  noLock(stressTune.add(y.stress.params, 'poke', 0, 10, 0.5).name('つつかれる(1回)').onChange(saveStress));
+  noLock(stressTune.add(y.stress.params, 'slap', 0, 20, 0.5).name('叩かれる(1回)').onChange(saveStress));
+  noLock(stressTune.add(y.stress.params, 'nearRate', 0, 10, 0.1).name('汚れの近く(1秒)').onChange(saveStress));
+  noLock(stressTune.add(y.stress.params, 'nearDist', 0, 2, 0.05).name('近いとみなす距離(m)').onChange(saveStress));
+  noLock(stressTune.add(y.stress.params, 'calmAfter', 0, 60, 1).name('減り始めるまで(秒)').onChange(saveStress));
+  noLock(stressTune.add(y.stress.params, 'recover', 0, 5, 0.1).name('減る量(1秒)').onChange(saveStress));
+  // 食べ終えたときに減る量（今ある食べ物は中間品質だけなので、それだけ出す）
+  noLock(stressTune.add(y.stress.params.meal, 'normal', 0, 100, 1).name('食べて減る(中間品質)').onChange(saveStress));
 
   // つつく・叩く：倒れる・転がるまでの回数（全体で 1 つ。保存する）
   const pokeTune = tune.addFolder('つつく・叩く');
