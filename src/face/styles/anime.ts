@@ -121,7 +121,7 @@ export class AnimeStyle implements FaceStyle {
     };
     const sides = [1, -1] as const;
     /** 涙の出どころ：開いた目（白目も）か、閉じた目か */
-    const shut = (k: EyeKind) => k !== 'open' && k !== 'shock';
+    const shut = (k: EyeKind) => k !== 'open' && k !== 'shock' && k !== 'swirl';
     if (ex.pale) layer(f.pale, () => this.drawPale(ctx, ex.pale!));
     if (ex.blush) layer(f.blush, () => this.drawBlush(ctx, ex.blush!));
     layer(f.eyes, () => sides.forEach((s) => this.drawEye(ctx, s, state)));
@@ -163,7 +163,9 @@ export class AnimeStyle implements FaceStyle {
       case 'smile': this.drawSmileEye(ctx, s); break;
       case 'closed': this.drawClosedEye(ctx, s); break;
       case 'squeeze': this.drawSqueezeEye(ctx, s); break;
-      case 'shock': this.drawShockEye(ctx, s, state); break;
+      case 'shock': this.drawShockEye(ctx, s); break;
+      case 'cross': this.drawCrossEye(ctx, s); break;
+      case 'swirl': this.drawSwirlEye(ctx, s); break;
     }
   }
 
@@ -324,39 +326,45 @@ export class AnimeStyle implements FaceStyle {
   }
 
   /**
-   * ぎゅっとつぶった目（参考：泣き叫ぶ魔理沙・食いしばる霊夢・アリス）。
-   * 目尻側が太く、目頭へ向かってとがるくさび形の帯で、わずかに上へ反る。
-   * 目尻の端からまつ毛が扇状に広がり、上に細いしわ
+   * ぎゅっとつぶった目「> <」：目頭を頂点に、目尻へ開く「く」の字。目頭（頂点）が太く、目尻の先へ細くとがる。
+   * 強くつぶっているように、上の腕は高く・下の腕は低く大きく開く
+   * （前は目尻が太いくさび形の帯で、穏やかに閉じた目に近く見えた）
    */
   protected drawSqueezeEye(ctx: CanvasRenderingContext2D, s: 1 | -1): void {
     const lw = this.lineWidth;
-    const { eyeW: w, eyeH: h } = this.layout;
-    const band = this.eyeLine([[-0.8, -0.08], [-0.45, 0.1], [0.1, 0.24], [0.6, 0.24], [1.02, 0.08]], s);
     ctx.fillStyle = this.palette.line;
-    this.strokeVar(ctx, band, lw * 0.3, lw * 3.0, lw * 4.4);
-    // 目尻のまつ毛（扇状）
-    const [ox, oy] = band[band.length - 1];
-    for (const [dx, dy] of [[0.22, 0.45], [0.36, 0.22], [0.4, -0.04], [0.3, -0.3]] as const) {
-      this.strokeVar(ctx, [[ox - s * w * 0.06, oy], [ox + s * dx * w, oy + dy * h]], lw * 1.8, lw * 1.0, lw * 0.15);
-    }
-    this.drawLidCrease(ctx, s, [[-0.35, 0.62], [0.25, 0.78], [0.8, 0.62]]);
+    // 頂点（目頭寄り）から、目尻の上・下へ。少しだけ外へ膨らませる
+    const apex: Pt = [-0.62, 0.04];
+    const upper = this.eyeLine([apex, [0.05, 0.36], [0.6, 0.6], [1.02, 0.7]], s, 8);
+    const lower = this.eyeLine([apex, [0.05, -0.3], [0.6, -0.5], [1.0, -0.58]], s, 8);
+    this.strokeVar(ctx, upper, lw * 3.6, lw * 3.0, lw * 0.6);
+    this.strokeVar(ctx, lower, lw * 3.6, lw * 2.8, lw * 0.6);
+    // 頂点を丸く埋める（2 本の付け根の隙間）
+    const [ax, ay] = this.eyeLine([apex], s, 1)[0];
+    this.dot(ctx, ax, ay, lw * 1.75, this.palette.line);
+    // まぶたの上下のしわ・目尻の外の力みの線は入れない（しわは加齢のしわに、線は顔から浮いて見えた）
   }
 
   /**
-   * 白目をむく（参考：落とされて餡子を吐く魔理沙）。目を丸く見開き、白目の真ん中に点のような小さな瞳。
+   * 白目をむく（参考：落とされて餡子を吐く魔理沙）。目を丸く見開いた真っ白な目（瞳は描かない）。
    * 輪郭は全周を黒い線で囲み、上側を太くする
    */
-  protected drawShockEye(ctx: CanvasRenderingContext2D, s: 1 | -1, state: FaceState): void {
+  protected drawShockEye(ctx: CanvasRenderingContext2D, s: 1 | -1): void {
     const lw = this.lineWidth;
     const { eyeW: w } = this.layout;
-    // 目の座標の、少し縦長の丸（上はやや平ら）
+    // 目の座標の、少し縦長の丸（上はやや平ら）。普通の目より少し小さく（0.86 倍）、
+    // 手描きらしく半径をゆがめる（左右の目で位相を変える。乱数でなく決まった値なので毎回同じ形）
+    const size = 0.86;
+    const ph = s > 0 ? 0.4 : 2.3;
     const ring: Pt[] = [];
-    for (let i = 0; i < 16; i++) {
-      const a = (i / 16) * Math.PI * 2;
-      const y = Math.sin(a) * (a < Math.PI ? 1.0 : 1.12);
-      ring.push([Math.cos(a) * 1.02, y + 0.02]);
+    const N = 32;
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      const warp = 1 + 0.035 * Math.sin(a * 2 + ph) + 0.022 * Math.sin(a * 3 + ph * 1.9) + 0.008 * Math.sin(a * 5 + ph * 0.7);
+      const y = Math.sin(a) * (a < Math.PI ? 1.0 : 1.12) * warp;
+      ring.push([Math.cos(a) * 1.02 * warp * size, (y + 0.02) * size]);
     }
-    const line = this.eyeLine([...ring, ring[0]], s, 6);
+    const line = this.eyeLine([...ring, ring[0]], s, 3);
     const shape = this.closedPath([line]);
     ctx.fillStyle = this.palette.white;
     ctx.fill(shape);
@@ -366,15 +374,88 @@ export class AnimeStyle implements FaceStyle {
     ctx.fillStyle = 'rgba(150, 162, 196, 0.45)';
     this.strokeVar(ctx, this.eyeLine([[-1.0, 0.6], [-0.4, 1.0], [0.4, 1.0], [1.0, 0.6]], s), w * 0.12, w * 0.22, w * 0.12);
     ctx.restore();
-    // 小さな瞳（わずかに目頭寄り）
-    const [px, py] = this.eyeLine([[-0.08, 0.0]], s, 1)[0];
-    this.dot(ctx, px, py, w * 0.15, mix(state.look.iris, '#000000', 0.88));
-    // 輪郭：下は細め、上は太め
+    // 瞳は描かない（真っ白。前は真ん中に点のような小さな瞳を描いていた）
+    // 輪郭：上は太め・下は細めで、太さも筆の線のように波打たせる（一周して付け根が揃うよう、波は周の整数倍）
     ctx.fillStyle = this.palette.line;
-    const top = line.slice(0, Math.round(line.length / 2) + 1);
-    const bottom = line.slice(Math.round(line.length / 2));
-    this.strokeVar(ctx, top, lw * 1.2, lw * 2.4, lw * 1.2);
-    this.strokeVar(ctx, bottom, lw * 1.2, lw * 1.0, lw * 1.2);
+    const n = line.length;
+    const widths = line.map((_, i) => {
+      const t = i / (n - 1);
+      const up = Math.max(0, Math.sin(t * Math.PI * 2)); // 上半分で 0〜1
+      const wave = 1 + 0.3 * Math.sin(t * Math.PI * 2 * 3 + ph) + 0.18 * Math.sin(t * Math.PI * 2 * 7 + ph * 2);
+      return lw * (1.0 + 1.3 * up) * wave;
+    });
+    this.strokeWidths(ctx, line, widths);
+  }
+
+  /**
+   * デフォルメした×（目を回して気絶）：目のあった所に、筆で払ったような太い 2 本の線を交差させる。
+   * 線は真ん中が太く両端が細い。少し丸みを付け、目尻側をわずかに下げる
+   */
+  protected drawCrossEye(ctx: CanvasRenderingContext2D, s: 1 | -1): void {
+    const lw = this.lineWidth;
+    ctx.fillStyle = this.palette.line;
+    const a = this.eyeLine([[-0.78, 0.62], [0.0, 0.04], [0.82, -0.6]], s, 8);
+    const b = this.eyeLine([[-0.78, -0.58], [0.0, -0.02], [0.82, 0.66]], s, 8);
+    this.strokeVar(ctx, a, lw * 0.9, lw * 3.0, lw * 0.9);
+    this.strokeVar(ctx, b, lw * 0.9, lw * 3.0, lw * 0.9);
+  }
+
+  /**
+   * ぐるぐる目（＠ ＠）：渦巻きだけ（白目・輪郭は描かない）。中心から外へ 3 周ほど広がる。
+   * 手描きらしく、半径を角度と周回でゆがめ（輪が平行にならない）、線の太さも波打たせる。ゆがみは左右の目で変える。
+   * 巻く向きは左右で揃える（目の座標は右目と左目で鏡写しなので、x を先に s 倍して打ち消す）
+   */
+  protected drawSwirlEye(ctx: CanvasRenderingContext2D, s: 1 | -1): void {
+    const lw = this.lineWidth;
+    // 目の座標は横が目の半幅・縦が目の半高なので、縦を縮めて正円に近づける
+    const { eyeW: w, eyeH: h } = this.layout;
+    const rx = 1.0, ry = w / h;
+    // 左右の目でゆがみの位相を変える（毎回同じ形になるよう、乱数でなく決まった値）
+    const ph = s > 0 ? 0 : 2.1;
+    const turns = 3;
+    const pts: Pt[] = [];
+    const widths: number[] = [];
+    const n = 140;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const a = t * turns * Math.PI * 2 + Math.PI * 0.5;
+      // 隣の輪とくっつかない程度に
+      const warp = 1 + 0.11 * Math.sin(a * 2 + ph) + 0.06 * Math.sin(a * 3 + ph * 1.7) + 0.05 * Math.sin(a + t * 7 + ph);
+      const r = (0.06 + t * 0.94) * warp;
+      pts.push([s * Math.cos(a) * r * rx, Math.sin(a) * r * ry]);
+      // 太さ：外ほど太く、そこへ不規則な波（入り抜きのある筆の線）
+      const wave = 1 + 0.38 * Math.sin(t * 17 + ph) + 0.22 * Math.sin(t * 41 + ph * 2.3);
+      widths.push(lw * (0.6 + 1.5 * Math.sqrt(t)) * Math.max(0.35, wave));
+    }
+    ctx.fillStyle = this.palette.line;
+    this.strokeWidths(ctx, this.eyeLine(pts, s, 1), widths);
+  }
+
+  /** 点ごとの太さを指定した線（strokeVar の点ごと版）。両端は丸める */
+  protected strokeWidths(ctx: CanvasRenderingContext2D, line: Pt[], widths: number[]): void {
+    const n = line.length;
+    if (n < 2) return;
+    const left: Pt[] = [];
+    const right: Pt[] = [];
+    for (let i = 0; i < n; i++) {
+      const a = line[Math.max(0, i - 1)], b = line[Math.min(n - 1, i + 1)];
+      let nx = -(b[1] - a[1]), ny = b[0] - a[0];
+      const len = Math.hypot(nx, ny) || 1;
+      nx /= len; ny /= len;
+      const hw = widths[i] * 0.5;
+      left.push([line[i][0] + nx * hw, line[i][1] + ny * hw]);
+      right.push([line[i][0] - nx * hw, line[i][1] - ny * hw]);
+    }
+    ctx.beginPath();
+    left.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    for (let i = n - 1; i >= 0; i--) ctx.lineTo(...right[i]);
+    ctx.closePath();
+    ctx.fill();
+    for (const i of [0, n - 1]) {
+      ctx.beginPath();
+      ctx.arc(line[i][0], line[i][1], widths[i] * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // ---- 涙・眉 ----
@@ -423,6 +504,14 @@ export class AnimeStyle implements FaceStyle {
         pts = [[-0.85, by - 0.55], [-0.62, by - 0.38], [-0.15, by - 0.02], [0.4, by + 0.22], [0.85, by + 0.25]];
         width = lw * 1.25;
         break;
+      case 'strain':
+        // 力み眉：怒り眉より目頭（鼻）の側へ寄せ、目頭の端を目の高さ近くまで強く下げる。太く短く、目尻側はあまり伸ばさない。
+        // 目頭の端が一番太い（ぐっと寄せた力のかたまり）
+        // 両端を結ぶ線より中ほどを下げ、下へたわむ「◡」寄りの弧にする（目尻側で反り上がる）。たわんだ中ほどが目に掛からない高さ
+        pts = [[-1.2, by - 0.6], [-0.98, by - 0.5], [-0.6, by - 0.28], [-0.12, by + 0.02], [0.3, by + 0.38]];
+        ctx.fillStyle = this.palette.brow;
+        this.strokeVar(ctx, this.eyeLine(pts, s), lw * 1.5, lw * 1.55, lw * 0.35);
+        return;
       default:
         // 普通：目の上の短くゆるい弧
         pts = [[-0.6, by + 0.02], [-0.15, by + 0.2], [0.35, by + 0.2], [0.75, by + 0.02]];
@@ -1138,6 +1227,8 @@ export class AnimeStyle implements FaceStyle {
     const len = 0.08 + 0.42 * amount;
     // 2本目：口の縁は右へ上がっていくので、1本目より少し上（口の縁の上）から垂らす
     const two = amount >= 0.9;
+    // 垂れ流し（1 を超える）：口の反対寄りからもう 1 本、長く垂らす
+    if (amount > 1.2) this.liquidStrand(ctx, x - wd * 1.6, y + wd * 0.1, len * 0.8, wd * 0.85, wd * 0.05);
     const x2 = x + wd * 1.4, y2 = y + wd * 0.3;
     if (two) this.liquidStrand(ctx, x2, y2, len * 0.55 + wd * 0.3, wd * 0.75, -wd * 0.1);
     this.liquidStrand(ctx, x, y, len, wd, wd * 0.15);

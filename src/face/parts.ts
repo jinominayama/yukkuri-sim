@@ -59,6 +59,8 @@ export const PARTS: PartDef[] = [
       { id: 'squeeze', name: 'ぎゅっ（> <）', value: { eyes: { kind: 'squeeze' } } },
       { id: 'wink', name: 'ウインク', value: { eyes: { kind: 'open', open: 0.95, other: 'smile' } } },
       { id: 'shock', name: '白目', value: { eyes: { kind: 'shock' } } },
+      { id: 'cross', name: '×', value: { eyes: { kind: 'cross' } } },
+      { id: 'swirl', name: 'ぐるぐる（＠ ＠）', value: { eyes: { kind: 'swirl' } } },
     ],
   },
   {
@@ -69,6 +71,7 @@ export const PARTS: PartDef[] = [
       { id: 'neutral', name: '普通', value: { brows: 'neutral' } },
       { id: 'worried', name: '困り', value: { brows: 'worried' } },
       { id: 'angry', name: '怒り', value: { brows: 'angry' } },
+      { id: 'strain', name: '力み', value: { brows: 'strain' } },
     ],
   },
   {
@@ -125,6 +128,7 @@ export const PARTS: PartDef[] = [
       { id: 'few', name: '少し', value: { drool: 0.35 } },
       { id: 'drip', name: 'たらり', value: { drool: 0.7 } },
       { id: 'lots', name: 'だらだら', value: { drool: 1 } },
+      { id: 'flood', name: '垂れ流し', value: { drool: 1.6 } },
     ],
   },
   {

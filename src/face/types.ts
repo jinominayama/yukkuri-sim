@@ -18,14 +18,17 @@ export type EyeKind =
   | 'smile'   // 笑って細めた目（^ ^）
   | 'closed'  // 穏やかに閉じた目
   | 'squeeze' // ぎゅっとつぶった目（> <）
-  | 'shock';  // 白目をむく（見開いた白目に、点のような小さな瞳）
+  | 'shock'   // 白目をむく（見開いた真っ白な目。瞳は描かない）
+  | 'cross'   // デフォルメした×（目を回して気絶する）
+  | 'swirl';  // ぐるぐる目（＠ ＠。白い丸に渦巻き）
 
 /** 眉の形 */
 export type BrowKind =
   | 'none'
   | 'neutral'
   | 'worried' // 困り眉（内側が上がる）
-  | 'angry';  // 怒り・力み（内側が下がる）
+  | 'angry'   // 怒り・力み（内側が下がる）
+  | 'strain'; // 力み（怒りより目頭に寄り、太く、目頭側を強く下げて寄せる）
 
 /** 口の形 */
 export type MouthKind =
