@@ -151,6 +151,11 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   pose.add({ f: () => y.locomotion.lieDown('supine') }, 'f').name('仰向けになる');
   pose.add({ f: () => y.getUp() }, 'f').name('起き上がる');
 
+  // 眠る（立ったまま柔らかくなって眠る。つつく等で起きる）・気絶（どの姿勢でもその場で柔らかくなり、しばらくすると気がつく）
+  const rest = doGroup.addFolder('眠る・気絶');
+  rest.add({ f: () => y.rest.toggleSleep() }, 'f').name('眠る／起こす');
+  rest.add({ f: () => y.rest.faint() }, 'f').name('気絶させる');
+
   // ごはん：食べ物を目の前に置くと、見つめる → むーしゃむーしゃ → しあわせー の順に食べる
   const meal = doGroup.addFolder('ごはん');
   meal.add({ f: () => y.feeding.start() }, 'f').name('食べ物をあげる');
@@ -340,6 +345,15 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
 
   const vomitTune = tune.addFolder('吐餡の起き方');
   noLock(vomitTune.add(y.vomit.params, 'fallHeight', 0.3, 3, 0.05).name('吐く落下の高さ(m)').onChange(saveVomit));
+
+  // 眠る・気絶の柔らかさと気絶の長さ（全体で 1 つ。保存する）
+  const restTune = tune.addFolder('眠る・気絶');
+  const saveRest = () => y.rest.save();
+  noLock(restTune.add(y.rest.params, 'sleepSoft', 0, 1, 0.01).name('眠るときの硬さ(倍)').onChange(saveRest));
+  noLock(restTune.add(y.rest.params, 'sleepSkin', 1, 60, 1).name('眠るときの皮のゆるさ(倍)').onChange(saveRest));
+  noLock(restTune.add(y.rest.params, 'faintSoft', 0, 1, 0.01).name('気絶の硬さ(倍)').onChange(saveRest));
+  noLock(restTune.add(y.rest.params, 'faintSkin', 1, 60, 1).name('気絶の皮のゆるさ(倍)').onChange(saveRest));
+  noLock(restTune.add(y.rest.params, 'faintTime', 2, 60, 1).name('気絶の長さ(秒)').onChange(saveRest));
 
   // ストレスのたまり方（全体で 1 つ。保存する）
   const stressTune = tune.addFolder('ストレスのたまり方');

@@ -119,7 +119,8 @@ export class Exercise {
    */
   start(prone?: boolean): boolean {
     const y = this.y;
-    if (this.active || y.feeding.active || y.dropping.active || y.vomit.active) return false;
+    if (this.active || y.feeding.active || y.dropping.active || y.vomit.active || y.rest.fainting) return false;
+    y.rest.wake(true);
     const loco = y.locomotion;
     loco.hold();
     this.phase = 'wait';

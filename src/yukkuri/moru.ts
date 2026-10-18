@@ -156,6 +156,8 @@ export class Moru {
 
   /** その場で振り始める。食べている・うんうん・体操・吐いている最中なら何もしない。寝転がっていれば起き上がってから */
   start(): boolean {
+    if (this.y.rest.fainting) return false;
+    this.y.rest.wake(true);
     const y = this.y;
     if (this.busy()) return false;
     y.locomotion.moru = true;
@@ -249,7 +251,7 @@ export class Moru {
   /** 食べている・うんうん・体操・吐いている最中か */
   private busy(): boolean {
     const y = this.y;
-    return y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active;
+    return y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.rest.fainting;
   }
 }
 

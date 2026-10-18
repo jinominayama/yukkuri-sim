@@ -182,6 +182,6 @@ export class Flee {
   /** 食べている・うんうん・体操・吐いている・もるんもるんの最中か */
   private busy(): boolean {
     const y = this.y;
-    return y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.moru.active;
+    return y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.moru.active || y.rest.active;
   }
 }

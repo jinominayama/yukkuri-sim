@@ -18,6 +18,7 @@ import { Vomit } from './vomit';
 import { Moru } from './moru';
 import { Stress } from './stress';
 import { Flee } from './flee';
+import { Rest } from './rest';
 import { TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
@@ -86,6 +87,12 @@ export class Yukkuri {
   readonly stress: Stress;
   /** 汚れ（うんうん・吐いた餡子）の近くにいると、嫌がって離れる */
   readonly flee: Flee;
+  /** 眠る・気絶（体を柔らかくする） */
+  readonly rest: Rest;
+  /** 呼吸の大きさ・速さの倍率（眠っている間は大きくゆっくり。設定の値に掛ける） */
+  breathGain = 1;
+  breathSlow = 1;
+  private breathPhase = 0;
   /** まわりに出す文字（texts.object をシーンに置いて表示する） */
   readonly texts = new TextFx();
   /** 起き上がる前に寝返りで横へずれている最中か、と、あと何回寝返ってよいか */
@@ -146,6 +153,7 @@ export class Yukkuri {
     this.moru.usePreset(this.presetId);
     this.stress = new Stress(this);
     this.flee = new Flee(this);
+    this.rest = new Rest(this);
     this.peni = new Peni(this);
     this.peni.usePreset(this.presetId);
     this.root.add(this.peni.object);
@@ -221,7 +229,7 @@ export class Yukkuri {
    */
   getUp(): void {
     const loco = this.locomotion;
-    if (!loco.isLying) return;
+    if (!loco.isLying || this.rest.fainting) return; // 気絶している間は起き上がらない
     // 起き上がると、体はお尻の側（体の下向きが寝転んで傾いた向き）へずれる。今の位置と、ずれた先の両方で見る
     const R = this.shape.radius;
     const c = this.body.center;
@@ -291,12 +299,15 @@ export class Yukkuri {
   step(dt: number): void {
     this.time += dt;
     this.face.update(dt);
-    this.body.volumeScale = 1 + this.life.breath * Math.sin(this.time * Math.PI * 2 * this.life.breathRate);
+    // 呼吸：速さを変えても波が飛ばないよう、位相を積み上げる
+    this.breathPhase = (this.breathPhase + dt * Math.PI * 2 * this.life.breathRate * this.breathSlow) % (Math.PI * 2);
+    this.body.volumeScale = 1 + this.life.breath * this.breathGain * Math.sin(this.breathPhase);
     // 寝返りで横へずれてから起き上がる：寝返りが終わったら、まだ塊に近ければもう一度、離れていれば起き上がる
     if (this.rollingAside && this.locomotion.resting) this.getUp();
     this.watchFall();
     this.stress.update(dt); // 上限に届いたら吐き始めるので、吐餡より先に
     this.flee.update(dt); // 汚れが近いかはストレスが調べる
+    this.rest.update(dt); // 眠る・気絶（ほかの動きが始まったら起こすので、それらの後の判断で足りる）
     this.vomit.update(dt); // 吐くときの身ぶりも移動の処理より先に指示する
     this.exercise.update(dt); // 体操の身ぶりを移動の処理より先に指示する
     this.locomotion.update(dt, this.physics.gravity);

@@ -90,7 +90,8 @@ export class Feeding {
 
   /** 食べ物を目の前に置いて食べ始める。寝転がっていれば起き上がってから。食べている最中なら何もしない */
   start(kind: FoodKind = DEFAULT_FOOD): boolean {
-    if (this.active || this.y.dropping.active || this.y.exercise.active || this.y.vomit.active) return false;
+    if (this.active || this.y.dropping.active || this.y.exercise.active || this.y.vomit.active || this.y.rest.fainting) return false;
+    this.y.rest.wake(true);
     const loco = this.y.locomotion;
     loco.hold();
     this.kind = kind;

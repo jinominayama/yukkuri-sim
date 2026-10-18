@@ -74,6 +74,13 @@ export class SoftBody {
   restVolume = 0;
   /** 渡された静止形状の重心（rest はこれを引いた座標） */
   readonly restCentroid = new Vector3();
+  /**
+   * 柔らかさの倍率：形に戻る強さ（どの状況の値にも）に掛ける。1 でそのまま、小さいほど柔らかい（眠る・気絶）。
+   * actuation と違い、移動の処理が毎ステップ戻さない
+   */
+  softness = 1;
+  /** 皮のゆるさの倍率：皮の伸びやすさ（edgeCompliance）に掛ける。1 でそのまま、大きいほど皮が伸びてへたる（眠る・気絶） */
+  skinLoose = 1;
   /** 直近ステップで地面に触れていた頂点の数 */
   groundContacts = 0;
 
@@ -285,7 +292,7 @@ export class SoftBody {
       mode === 'hop' ? p.hopStiffness
         : mode === 'prone' ? p.proneStiffness
           : mode === 'supine' ? p.supineStiffness
-            : p.shapeStiffness);
+            : p.shapeStiffness) * this.softness;
     const shapeK = 1 - Math.pow(1 - stiffness, dt * 60 / sub);
     const upright = Math.max(p.upright, this.actuation.uprightMin ?? 0);
     const uprightK = 1 - Math.pow(1 - upright, dt * 60 / sub);
@@ -304,7 +311,7 @@ export class SoftBody {
         pos[k + 2] += vel[k + 2] * h;
       }
 
-      this.solveEdges(p.edgeCompliance / (h * h));
+      this.solveEdges((p.edgeCompliance * this.skinLoose) / (h * h));
       this.solveVolume(p.volumeCompliance / (h * h));
       this.solveShapeMatching(shapeK, uprightK);
       this.solveGround(p.friction);

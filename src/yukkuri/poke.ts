@@ -168,6 +168,7 @@ export class Poke {
   private hit(point: THREE.Vector3, dir: THREE.Vector3, strength: number, slap: boolean): void {
     const y = this.y;
     const R = y.shape.radius;
+    y.rest.wake(true); // 眠っていたら起きる（顔はつつかれた反応にする）
     this.point.copy(point);
     this.velocity.copy(dir).normalize().multiplyScalar(strength);
     this.pushLeft = slap ? SLAP_TIME : PUSH_TIME;
@@ -318,6 +319,6 @@ export class Poke {
   /** 食べている・うんうん・体操・吐いている最中か（その動きの顔を優先する） */
   private busy(): boolean {
     const y = this.y;
-    return y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active;
+    return y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.rest.fainting;
   }
 }

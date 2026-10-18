@@ -235,7 +235,8 @@ export class Vomit {
    */
   start(): boolean {
     const y = this.y;
-    if (this.active || y.dropping.active) return false;
+    if (this.active || y.dropping.active || y.rest.fainting) return false;
+    y.rest.wake(true);
     if (y.exercise.active) y.exercise.cancel();
     if (y.feeding.active) y.feeding.cancel();
     y.locomotion.hold();
