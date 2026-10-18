@@ -24,25 +24,35 @@ export interface MoruParams {
   wag: number;
   /** 尻を上げる角度（度。前へ倒す角度。Locomotion.moruLift に渡す。体型ごとに保存する） */
   lift: number;
+  /**
+   * もるんもるんで這うときの接地面の柔らかさ（形に戻る強さに掛ける倍率。小さいほど床に押し付けてつぶれる）と、
+   * 床へ押し付ける強さ（m/s²。振りに合わせて波打つ）。全体で 1 つ保存する
+   */
+  contactSoft: number;
+  press: number;
+  /** お尻の玉の大きさ（体の平均半径に対する比。Locomotion.moruDomeSize に渡す。体型ごとに保存する） */
+  domeSize: number;
+  /** お尻の玉を後ろ（前へ倒した体では上かつ後ろ）へ寄せる量（体の平均半径に対する比。Locomotion.moruDomeBack。体型ごとに保存する） */
+  domeBack: number;
 }
 
-export const DEFAULT_MORU: MoruParams = { face: 'happy', wag: 0.35, lift: 60 };
+export const DEFAULT_MORU: MoruParams = { face: 'happy', wag: 0.35, lift: 60, contactSoft: 0.15, press: 7, domeSize: 1, domeBack: 0.3 };
 
 /** 左右の揺れ幅の上限（調整パネルの欄の右端。大きくするとお尻がとがって伸びる） */
 export const MORU_WAG_MAX = 0.4;
 
 /** 体型ごとに保存する項目 */
-type Fit = Pick<MoruParams, 'wag' | 'lift'>;
-const FIT_KEYS = ['wag', 'lift'] as const;
+type Fit = Pick<MoruParams, 'wag' | 'lift' | 'domeSize' | 'domeBack'>;
+const FIT_KEYS = ['wag', 'lift', 'domeSize', 'domeBack'] as const;
 
 /** 体型ごとの揺れ幅・角度の初期値（体型 ID → 値。ない体型は DEFAULT_MORU）。調整パネルで体型ごとに合わせた値 */
-const PRESET_MORU: Record<string, Fit> = {
+const PRESET_MORU: Record<string, Partial<Fit>> = {
   user: { wag: 0.07, lift: 24 },
-  ball: { wag: 0.09, lift: 17 },
-  egg: { wag: 0.13, lift: 28 },
-  chick: { wag: 0.09, lift: 15 },
-  flat: { wag: 0.07, lift: 15 },
-  eggplant: { wag: 0.14, lift: 35 },
+  ball: { wag: 0.12, lift: 35, domeSize: 1.11, domeBack: 0.34 },
+  egg: { wag: 0.18, lift: 28, domeSize: 0.93, domeBack: 0.42 },
+  chick: { wag: 0.2, lift: 43, domeSize: 0.84, domeBack: 0.18 },
+  flat: { wag: 0.17, lift: 31, domeSize: 0.85, domeBack: 0.03 },
+  eggplant: { wag: 0.14, lift: 47, domeSize: 1.18, domeBack: 0.36 },
   caterpillar: { wag: 0.07, lift: 20 },
 };
 
@@ -81,7 +91,12 @@ const SAY_EVERY = 4.5;
 
 export class Moru {
   private readonly saved = loadJSON<Partial<MoruParams>>(STORAGE_KEY);
-  readonly params: MoruParams = { ...DEFAULT_MORU, face: this.saved?.face ?? DEFAULT_MORU.face };
+  readonly params: MoruParams = {
+    ...DEFAULT_MORU,
+    face: this.saved?.face ?? DEFAULT_MORU.face,
+    contactSoft: this.saved?.contactSoft ?? DEFAULT_MORU.contactSoft,
+    press: this.saved?.press ?? DEFAULT_MORU.press,
+  };
   private readonly fits: Record<string, Partial<Fit>> = loadFits();
   /** ごく前の版で全体に 1 つだけ保存していた揺れ幅。体型ごとの保存がまだなければ、開いたときの体型の値として引き継ぐ */
   private legacyWag = loadJSON(FIT_KEY) || loadJSON(LEGACY_WAG_KEY) ? undefined : this.saved?.wag;
@@ -142,6 +157,15 @@ export class Moru {
   private applyFit(): void {
     this.y.locomotion.moruWag = this.params.wag;
     this.y.locomotion.moruLift = this.params.lift;
+    this.y.locomotion.moruDomeSize = this.params.domeSize;
+    this.y.locomotion.moruDomeBack = this.params.domeBack;
+    this.applyContact();
+  }
+
+  /** 這うときの接地面の柔らかさ・押し付けを移動の処理へ渡す */
+  applyContact(): void {
+    this.y.locomotion.moruContactSoft = this.params.contactSoft;
+    this.y.locomotion.moruPress = this.params.press;
   }
 
   /** その場で振っている（ボタンで始めた）か */
@@ -149,9 +173,10 @@ export class Moru {
     return this.y.locomotion.moru;
   }
 
-  /** 顔の選び方を保存する（全体で 1 つ） */
+  /** 顔の選び方と、這うときの接地面の柔らかさ・押し付けを保存する（全体で 1 つ） */
   save(): void {
-    saveJSON(STORAGE_KEY, { face: this.params.face });
+    const { face, contactSoft, press } = this.params;
+    saveJSON(STORAGE_KEY, { face, contactSoft, press });
   }
 
   /** その場で振り始める。食べている・うんうん・体操・吐いている最中なら何もしない。寝転がっていれば起き上がってから */
@@ -256,7 +281,7 @@ export class Moru {
 }
 
 function pickFit(p: MoruParams): Fit {
-  return { wag: p.wag, lift: p.lift };
+  return { wag: p.wag, lift: p.lift, domeSize: p.domeSize, domeBack: p.domeBack };
 }
 
 /** 体型ごとの揺れ幅・角度を読む。前の版（揺れ幅だけ。体型 ID → 数）の保存があれば引き継ぐ */

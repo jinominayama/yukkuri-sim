@@ -172,6 +172,8 @@ const MORU_TURN = 0.5;
  * 0.8 で全体型 1 cm 以内（前後に長い体型の背骨の曲げを保つ GESTURE_STIFFNESS より強い）
  */
 const MORU_STIFFNESS = 0.8;
+/** もるんもるんで這うとき、接地面の皮をゆるめる強さ（接地面の硬さが 0 のとき、皮の伸びやすさを 1 + これ 倍） */
+const MORU_CONTACT_SKIN = 12;
 /** もるんもるんで這うとき、横向きの速さを消す速さ（1/秒） */
 const MORU_SIDE_DAMP = 12;
 /**
@@ -251,6 +253,15 @@ export class Locomotion {
   moruWag = 0.35;
   /** もるんもるんで尻を上げる角度（度。前へ倒す角度）。調整パネルの「もるんもるん」→「尻を上げる角度」 */
   moruLift = 60;
+  /**
+   * もるんもるんで這うときの接地面の柔らかさ（形に戻る強さに掛ける倍率）と、床へ押し付ける強さ（m/s²）。
+   * 体を床に押し付けて進むので、床に着いた所（顔の側は除く）だけ柔らかくつぶし、振りに合わせて押し付ける（Moru が設定を渡す）
+   */
+  moruContactSoft = 0.15;
+  /** もるんもるんで、お尻を丸い玉に寄せるときの玉の大きさと、後ろへ寄せる量（Moru が体型ごとの設定を渡す） */
+  moruDomeSize = 1;
+  moruDomeBack = 0.3;
+  moruPress = 7;
   /** もるんもるんの振りの、振り切った回数（振り切るたびに 1 増える）と、その向き（+1 で体の右へ振った） */
   wagBeats = 0;
   wagSide = 1;
@@ -652,6 +663,7 @@ export class Locomotion {
     act.bend = 0;
     act.sideBend = 0;
     act.tailSway = 0;
+    act.tailDome = 0;
     act.arch = 0;
     act.lean = 0;
     act.yaw = null;
@@ -661,6 +673,9 @@ export class Locomotion {
     act.uprightMin = null;
     act.stiffnessMin = null;
     act.stiffnessMode = 'normal';
+    act.contactSoft = null;
+    act.contactPress = 0;
+    act.contactSkin = 1;
     act.orientation = null;
     this.rolling = false;
     this.knockRoll = false;
@@ -699,6 +714,10 @@ export class Locomotion {
     act.stiffnessMin = null;
     act.orientation = null;
     act.tailSway = 0;
+    act.tailDome = 0;
+    act.contactSoft = null;
+    act.contactPress = 0;
+    act.contactSkin = 1;
     if (this.hasTarget) {
       // 向きを変えるのは決まった瞬間だけ（常に回し続けると機械的で、宙に浮いて見える）
       //   跳ねる … 跳び出した直後に、踏み切りで決めた方向へ素早く体をひねる
@@ -863,6 +882,11 @@ export class Locomotion {
         const g = this.moruPose(dt, this.cmdYaw, false);
         sideGoal = g.side;
         archGoal = g.arch;
+        // 床に押し付けて進む：床に着いた所だけ柔らかくつぶし、振りの真ん中（前へずる所）で強く押し付ける
+        act.contactSoft = this.moruContactSoft;
+        act.contactPress = this.moruPress * g.surge;
+        // 皮も接地面だけゆるめる（形に戻る強さを下げるだけでは、皮の張りで丸いまま残る）。柔らかくするほどゆるめる
+        act.contactSkin = 1 + MORU_CONTACT_SKIN * (1 - this.moruContactSoft);
         rate = 6;
         // 振りの真ん中で一番速く、振り切った所で遅い。目的地が近い（着けるよう 4 割は残す）・横や後ろにあるほど遅い
         const yawNow = wrapAngle(wantYaw - this.cmdYaw);
@@ -1093,6 +1117,12 @@ export class Locomotion {
     act.orientation = this.moruCmd;
     act.uprightMin = MORU_POSTURE;
     act.tailSway = wag;
+    // お尻の先を太らせる（前へ倒すにつれて。先細りの卵形の端が、先へ行くほど太るように）
+    // お尻を丸い玉にする（前へ倒すにつれて）。前後に長い体型（いもむし型）は背骨ごと曲げてお尻を上げるので、
+    // 調整のしかたが違う。別に作るまで使わない
+    act.tailDome = long ? 0 : tip;
+    act.tailDomeSize = this.moruDomeSize;
+    act.tailDomeBack = this.moruDomeBack;
     // 形を保つ強さを上げる（やわらかいままだと、お尻を振った反動で頭ごと横へ 2〜4 cm 揺れる）
     act.stiffnessMin = MORU_STIFFNESS;
     // 倒れきってから頭の先を支点にする（倒れる途中から留めると、頭が前へ出られず体が後ろへずれる）

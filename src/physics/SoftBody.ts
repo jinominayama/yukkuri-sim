@@ -110,6 +110,15 @@ export class SoftBody {
      */
     tailSway: 0,
     /**
+     * お尻を丸い玉に寄せる量（0〜1。0 でそのまま）。体の後ろ上に見えない球を置き、体の後ろ側ほど皮をその球の表面へ寄せる
+     * （頭・顔の側は動かさない）。お尻がとがらず、まんまるの大きな玉になる（もるんもるん）
+     */
+    tailDome: 0,
+    /** 玉の大きさ（静止形状の平均半径に対する比） */
+    tailDomeSize: 1,
+    /** 玉の中心を後ろへ寄せる量（静止形状の平均半径に対する比。体の後ろ向き＝前へ倒した体では上かつ後ろ） */
+    tailDomeBack: 0.3,
+    /**
      * 縦への曲げ（rad）。背骨（前後の軸）を縦の弧に曲げる。0 でまっすぐ。
      *   + … 後ろを持ち上げる。前 25% はまっすぐのまま胴の中ほどで曲がり、後ろ 25% は丸ごとこの角度だけ上を向く（お尻を突き上げる）
      *   - … 前を持ち上げる。後ろ 25% はまっすぐのまま、前 25% が丸ごと上を向く（頭の側を起こして反り返る）
@@ -135,6 +144,15 @@ export class SoftBody {
     uprightMin: null as number | null,
     /** 形に戻る強さの下限（体を大きく曲げた形を保つときなど。null で通常） */
     stiffnessMin: null as number | null,
+    /**
+     * 接地面の柔らかさ（0〜1）：床に触れている所（と床のすぐ上）だけ、形に戻る強さにこれを掛ける。
+     * 顔の付く前側（静止形状の前 CONTACT_FACE_FROM〜TO）は柔らかくしない（顔の絵がゆがまないように）。null で通常
+     */
+    contactSoft: null as number | null,
+    /** 接地面を床へ押し付ける加速度（m/s²。contactSoft と同じ所に、同じ重みで）。0 で押さない */
+    contactPress: 0,
+    /** 接地面の皮のゆるさ（皮の伸びやすさに掛ける倍率。contactSoft と同じ所に、同じ重みで）。1 でそのまま */
+    contactSkin: 1,
     /** 形に戻る強さをどの状況の値にするか */
     stiffnessMode: 'normal' as 'normal' | 'hop' | 'prone' | 'supine',
     /** 目標の姿勢（回転）。指定すると yaw・lean の代わりにこの姿勢へ近づける（横になる・転がる等） */
@@ -145,6 +163,17 @@ export class SoftBody {
   private pivotX = 0;
   private pivotZ = 0;
   /** 静止形状の前後方向の範囲（ローカル z） */
+  /** 静止形状の前後の位置（0 = 後端、1 = 前端）。接地面を柔らかくするときに顔の側を外す */
+  private frontness: Float32Array = new Float32Array(0);
+  /** 静止形状の前後の範囲と、重心から頂点までの平均の距離（お尻の玉の大きさの基準） */
+  private restZMin = 0;
+  private restZMax = 0;
+  private restRadius = 1;
+  /** お尻の玉に寄せる動き（頂点ごと）と、それを作ったときの大きさ・位置（変わったら作り直す） */
+  private domeDelta = new Float32Array(0);
+  private domeKey = '';
+  /** お尻を玉に寄せきったときの体積の、静止形状に対する比 */
+  private domeVolume = 1;
   private restYMin = 0;
   private restYMax = 0;
   /** actuation を反映した目標形状（ローカル、重心が原点）とその前後の範囲 */
@@ -234,6 +263,15 @@ export class SoftBody {
       this.restYMin = Math.min(this.restYMin, this.rest[i]);
       this.restYMax = Math.max(this.restYMax, this.rest[i]);
     }
+    this.frontness = new Float32Array(this.n);
+    const zSpan = Math.max(zHi - zLo, 1e-6);
+    for (let i = 0; i < this.n; i++) this.frontness[i] = (this.rest[3 * i + 2] - zLo) / zSpan;
+    this.restZMin = zLo;
+    this.restZMax = zHi;
+    let rSum = 0;
+    for (let i = 0; i < this.n * 3; i += 3) rSum += Math.hypot(this.rest[i], this.rest[i + 1], this.rest[i + 2]);
+    this.restRadius = rSum / Math.max(1, this.n);
+    this.domeKey = ''; // 形が変わったので、お尻の玉の動きも作り直す
     this.updateActuatedShape();
   }
 
@@ -299,21 +337,25 @@ export class SoftBody {
     const damp = Math.max(0, 1 - p.damping * h);
     const { pos, prev, vel, invMass, n } = this;
     this.updateActuatedShape();
+    // 接地面を柔らかくする・押し付ける：頂点ごとの重み（床からの高さと、顔の側を外す重み）
+    const soft = this.actuation.contactSoft;
+    const press = this.actuation.contactPress;
+    const contact = soft !== null || press > 0 ? this.contactWeights() : null;
 
     for (let s = 0; s < sub; s++) {
       for (let i = 0; i < n; i++) {
         if (invMass[i] === 0) continue;
         const k = 3 * i;
-        vel[k + 1] -= p.gravity * h;
+        vel[k + 1] -= (p.gravity + (contact ? press * contact[i] : 0)) * h;
         prev[k] = pos[k]; prev[k + 1] = pos[k + 1]; prev[k + 2] = pos[k + 2];
         pos[k] += vel[k] * h;
         pos[k + 1] += vel[k + 1] * h;
         pos[k + 2] += vel[k + 2] * h;
       }
 
-      this.solveEdges((p.edgeCompliance * this.skinLoose) / (h * h));
+      this.solveEdges((p.edgeCompliance * this.skinLoose) / (h * h), contact, this.actuation.contactSkin);
       this.solveVolume(p.volumeCompliance / (h * h));
-      this.solveShapeMatching(shapeK, uprightK);
+      this.solveShapeMatching(shapeK, uprightK, contact && soft !== null ? soft : 1, contact);
       this.solveGround(p.friction);
 
       // 速度を更新する。元の形に戻る動き（シェイプマッチングの補正）は、
@@ -338,6 +380,70 @@ export class SoftBody {
   }
 
   /**
+   * お尻を丸い玉に寄せる動き（頂点ごと、静止形状の座標で）。
+   *   1. 玉の中心から見て、体の表面が玉より内側にある所だけ玉の表面まで押し出す（玉と体を「なめらかに足し合わせた」形。
+   *      玉より外にはみ出している所は引っ込めない）。境目は滑らかな最大値でつなぐ
+   *   2. 体の後ろ側ほど強く（前端から TAIL_DOME_FROM〜TO の間でなめらかに。頭・顔の側は動かさない）
+   *   3. 隣り合う頂点どうしで何回かならし、でこぼこを消す（玉を大きくすると、押し出す量が頂点ごとにばらついて波打った）
+   *   4. 全体の平均を差し引く（重心がずれると、形に戻る力で体が押し出される）
+   */
+  private domeShape(size: number, back: number): Float32Array {
+    const key = size.toFixed(4) + ',' + back.toFixed(4);
+    const n = this.n;
+    if (this.domeKey === key && this.domeDelta.length === n * 3) return this.domeDelta;
+    this.domeKey = key;
+    const rest = this.rest;
+    const dd = this.domeDelta.length === n * 3 ? this.domeDelta : (this.domeDelta = new Float32Array(n * 3));
+    const R = this.restRadius * size;
+    const cz = -this.restRadius * back;
+    const zSpan = Math.max(this.restZMax - this.restZMin, 1e-6);
+    const soft = this.restRadius * TAIL_DOME_BLEND;
+    for (let i = 0; i < n * 3; i += 3) {
+      const x = rest[i], y = rest[i + 1], z = rest[i + 2];
+      const w = smoothstep(TAIL_DOME_FROM, TAIL_DOME_TO, (this.restZMax - z) / zSpan);
+      const dx = x, dy = y, dz = z - cz;
+      const d = Math.hypot(dx, dy, dz);
+      let ex = 0, ey = 0, ez = 0;
+      if (w > 0 && d > 1e-6) {
+        // 滑らかな最大値：d と R の大きい方へ寄せる（差が小さい所はなめらかにつなぐ）
+        const m = (d + R + Math.sqrt((d - R) * (d - R) + soft * soft)) * 0.5;
+        const k = (m / d - 1) * w;
+        ex = dx * k; ey = dy * k; ez = dz * k;
+      }
+      dd[i] = ex; dd[i + 1] = ey; dd[i + 2] = ez;
+    }
+    // 隣り合う頂点どうしでならす
+    const { edges } = this;
+    const sum = new Float32Array(n * 3);
+    const cnt = new Float32Array(n);
+    for (let it = 0; it < TAIL_DOME_SMOOTH; it++) {
+      sum.fill(0);
+      cnt.fill(0);
+      for (let e = 0; e < edges.length; e += 2) {
+        const a = 3 * edges[e], b = 3 * edges[e + 1];
+        sum[a] += dd[b]; sum[a + 1] += dd[b + 1]; sum[a + 2] += dd[b + 2];
+        sum[b] += dd[a]; sum[b + 1] += dd[a + 1]; sum[b + 2] += dd[a + 2];
+        cnt[a / 3]++; cnt[b / 3]++;
+      }
+      for (let i = 0; i < n; i++) {
+        if (cnt[i] === 0) continue;
+        const j = 3 * i;
+        dd[j] = (dd[j] + sum[j] / cnt[i]) * 0.5;
+        dd[j + 1] = (dd[j + 1] + sum[j + 1] / cnt[i]) * 0.5;
+        dd[j + 2] = (dd[j + 2] + sum[j + 2] / cnt[i]) * 0.5;
+      }
+    }
+    let mx = 0, my = 0, mz = 0;
+    for (let i = 0; i < n * 3; i += 3) { mx += dd[i]; my += dd[i + 1]; mz += dd[i + 2]; }
+    mx /= n; my /= n; mz /= n;
+    for (let i = 0; i < n * 3; i += 3) { dd[i] -= mx; dd[i + 1] -= my; dd[i + 2] -= mz; }
+    const moved = new Float32Array(n * 3);
+    for (let i = 0; i < n * 3; i++) moved[i] = rest[i] + dd[i];
+    this.domeVolume = this.volume(moved) / Math.max(this.restVolume, 1e-9);
+    return dd;
+  }
+
+  /**
    * actuation（伸縮・曲げ）を反映した目標形状を作る。
    * 皮の基準の長さも同じ形から求める（体を変形させている間に皮が突っ張ってしわになるのを防ぐ）
    */
@@ -354,14 +460,24 @@ export class SoftBody {
     const side = act.sideBend;
     const tail = act.tailSway;
     const arch = act.arch;
+    const dome = act.tailDome;
+    // 玉に寄せたぶんの動き（頂点ごと。大きさ・位置が変わったときだけ作り直し、寄せる量 dome を掛けて使う）
+    const dd = dome > 1e-5 ? this.domeShape(act.tailDomeSize, act.tailDomeBack) : null;
 
     let gzMin = Infinity, gzMax = -Infinity;
     for (let i = 0; i < n * 3; i += 3) {
       const t = (rest[i + 1] - y0) / H; // 0(底)〜1(頭頂)
       const t2 = t * t;
-      g[i] = rest[i] * sx;
-      g[i + 1] = rest[i + 1] * sy - bend * 0.45 * H * sy * t2;
-      g[i + 2] = rest[i + 2] * sz + bend * H * t2;
+      let rx = rest[i], ry = rest[i + 1], rz = rest[i + 2];
+      // お尻を丸い玉に寄せる
+      if (dd) {
+        rx += dd[i] * dome;
+        ry += dd[i + 1] * dome;
+        rz += dd[i + 2] * dome;
+      }
+      g[i] = rx * sx;
+      g[i + 1] = ry * sy - bend * 0.45 * H * sy * t2;
+      g[i + 2] = rz * sz + bend * H * t2;
       gzMin = Math.min(gzMin, g[i + 2]);
       gzMax = Math.max(gzMax, g[i + 2]);
     }
@@ -481,7 +597,10 @@ export class SoftBody {
     this.goalFront.set(g[fi], g[fi + 1], g[fi + 2]);
     this.goalRear.set(g[ri], g[ri + 1], g[ri + 2]);
 
-    const identity = Math.abs(sy - 1) + Math.abs(st - 1) + Math.abs(bend) + Math.abs(side) + Math.abs(tail) + Math.abs(arch) < 1e-4;
+    // 何も変形していなければ、皮の基準の長さは静止形状のまま（お尻の玉も変形に数える。数え忘れると、お尻を左右に振って
+    // 真ん中を通る瞬間だけ皮が元の形に引っ張られ、カクッと動いた）
+    const identity = Math.abs(sy - 1) + Math.abs(st - 1) + Math.abs(bend) + Math.abs(side) + Math.abs(tail) + Math.abs(arch)
+      + (dd ? dome : 0) < 1e-4;
     if (identity) {
       edgeTarget.set(edgeLen);
       return;
@@ -493,13 +612,16 @@ export class SoftBody {
     }
   }
 
-  private solveEdges(alpha: number): void {
+  /** contact・skin：接地面の重みと皮のゆるさ（両端の重みの平均だけ、伸びやすさに skin を混ぜる） */
+  private solveEdges(alpha0: number, contact: Float32Array | null = null, skin = 1): void {
     const { pos, invMass, edges, edgeTarget: edgeLen } = this;
+    const loose = contact !== null && skin !== 1;
     for (let e = 0; e < edgeLen.length; e++) {
       const a = edges[2 * e], b = edges[2 * e + 1];
       const wa = invMass[a], wb = invMass[b];
       const w = wa + wb;
       if (w === 0) continue;
+      const alpha = loose ? alpha0 * (1 + (skin - 1) * 0.5 * (contact[a] + contact[b])) : alpha0;
       const dx = pos[3 * a] - pos[3 * b];
       const dy = pos[3 * a + 1] - pos[3 * b + 1];
       const dz = pos[3 * a + 2] - pos[3 * b + 2];
@@ -538,7 +660,9 @@ export class SoftBody {
       wsum += invMass[i] * g2;
     }
     if (wsum === 0) return;
-    const C = vol - this.restVolume * this.volumeScale;
+    // お尻を玉に寄せている間は、玉で増えた分だけ体積も増やす（静止時の体積のままだと、膨らませた目標の形と押し合ってしわが寄る）
+    const dome = this.actuation.tailDome > 1e-5 ? 1 + (this.domeVolume - 1) * this.actuation.tailDome : 1;
+    const C = vol - this.restVolume * this.volumeScale * dome;
     const lambda = -C / (wsum + alpha) / 6;
     for (let i = 0; i < n; i++) {
       const w = invMass[i] * lambda;
@@ -548,7 +672,25 @@ export class SoftBody {
   }
 
   /** Müller et al. 2005 のシェイプマッチング。回転は反復法の極分解（2016）で求める */
-  private solveShapeMatching(k: number, uprightK: number): void {
+  /**
+   * 接地面の重み（頂点ごと 0〜1）：床から体の高さの CONTACT_HEIGHT 以内ほど 1 に近く、
+   * 静止形状で前側（顔の付く所）ほど 0 に近い
+   */
+  private contactWeights(): Float32Array {
+    const { pos, n } = this;
+    const w = this.contactW.length === n ? this.contactW : (this.contactW = new Float32Array(n));
+    const band = (this.restYMax - this.restYMin) * CONTACT_HEIGHT;
+    for (let i = 0; i < n; i++) {
+      const low = 1 - smoothstep(0, band, pos[3 * i + 1]);
+      const face = smoothstep(CONTACT_FACE_FROM, CONTACT_FACE_TO, this.frontness[i]);
+      w[i] = low * (1 - face);
+    }
+    return w;
+  }
+  private contactW = new Float32Array(0);
+
+  /** soft・contact：接地面の柔らかさと頂点ごとの重み（contact[i] だけ k に soft を混ぜる） */
+  private solveShapeMatching(k: number, uprightK: number, soft = 1, contact: Float32Array | null = null): void {
     const { pos, rest, n } = this;
     const c = centroid(pos, this.center);
 
@@ -633,6 +775,10 @@ export class SoftBody {
       ox = dx;
       oz = dz;
     }
+    // 頂点ごとに強さを変えるとき（接地面を柔らかくする）は、補正の合計が 0 にならず体全体が押される
+    // （目標の形に届かない所が片寄っていると、その向きへ進み続ける）。平均を差し引いて、全体は動かさない
+    const varied = contact !== null && soft < 1;
+    let sx = 0, sy = 0, sz = 0;
     for (let i = 0; i < n; i++) {
       if (this.invMass[i] === 0) continue;
       const j = 3 * i;
@@ -640,14 +786,27 @@ export class SoftBody {
       const gx = c.x + ox + r0.x * qx + r1.x * qy + r2.x * qz;
       const gy = c.y + r0.y * qx + r1.y * qy + r2.y * qz;
       const gz = c.z + oz + r0.z * qx + r1.z * qy + r2.z * qz;
-      const dx = (gx - pos[j]) * k, dy = (gy - pos[j + 1]) * k, dz = (gz - pos[j + 2]) * k;
-      pos[j] += dx;
-      pos[j + 1] += dy;
-      pos[j + 2] += dz;
+      const ki = varied ? k * (1 - (1 - soft) * contact[i]) : k;
       // 端を支点にした送り（ox, oz）は這うための推進なので、弾みの対象から外す
-      this.smDelta[j] = dx - ox * k;
+      const dx = (gx - ox - pos[j]) * ki, dy = (gy - pos[j + 1]) * ki, dz = (gz - oz - pos[j + 2]) * ki;
+      this.smDelta[j] = dx;
       this.smDelta[j + 1] = dy;
-      this.smDelta[j + 2] = dz - oz * k;
+      this.smDelta[j + 2] = dz;
+      sx += dx; sy += dy; sz += dz;
+    }
+    if (varied) {
+      sx /= n; sy /= n; sz /= n;
+    } else {
+      sx = sy = sz = 0;
+    }
+    for (let i = 0; i < n; i++) {
+      if (this.invMass[i] === 0) continue;
+      const j = 3 * i;
+      const sm = this.smDelta;
+      sm[j] -= sx; sm[j + 1] -= sy; sm[j + 2] -= sz;
+      pos[j] += sm[j] + ox * k;
+      pos[j + 1] += sm[j + 1];
+      pos[j + 2] += sm[j + 2] + oz * k;
     }
   }
 
@@ -725,6 +884,19 @@ const SPINE_SAMPLES = 48;
  * 体の約 3 割が振れる。広げると（前端から・高さ 90% まで）お尻の丸みが大きく振れるが、丸い体型では後頭部（帽子の後ろの支え）まで
  * 振れて頭と帽子が動く。狭くすると（前から 25% より後ろ・高さ 75% まで）お尻の先だけがとがって動く
  */
+/**
+ * 接地面を柔らかくする範囲：床から体の高さのこの割合までを「接地面」とみなす（床に近いほど重い）。
+ * 静止形状の前後の位置（後端 0〜前端 1）が CONTACT_FACE_FROM より前は外し始め、CONTACT_FACE_TO で完全に外す（顔の付く所）
+ */
+const CONTACT_HEIGHT = 0.3;
+const CONTACT_FACE_FROM = 0.62;
+const CONTACT_FACE_TO = 0.8;
+/** お尻を丸い玉に寄せる範囲：静止形状の前端から測って、この割合の所から寄せ始め、TO より後ろは丸ごと寄せる */
+const TAIL_DOME_FROM = 0.3;
+const TAIL_DOME_TO = 0.75;
+/** お尻の玉：体と玉の境目をなめらかにつなぐ幅（静止形状の平均半径に対する比）と、隣どうしでならす回数 */
+const TAIL_DOME_BLEND = 0.35;
+const TAIL_DOME_SMOOTH = 6;
 const TAIL_REAR_FROM = 0.3;
 const TAIL_REAR_TO = 0.8;
 const TAIL_LOW_FROM = 0.45;
