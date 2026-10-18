@@ -45,7 +45,7 @@ export const EXPRESSIONS: ExpressionSet[] = [
   // 参考：歯を食いしばって耐える
   { id: 'endure', name: '食いしばる', parts: { ...base, eyes: 'squeeze', brows: 'angry', mouth: 'grit', blush: 'red', tears: 'more', sweat: SWEAT_SOME, strain: 'max' } },
   { id: 'content', name: 'ほっこり', parts: { ...base, eyes: 'smile', mouth: 'smileSmall', blush: 'mild' } },
-  { id: 'surprised', name: 'びっくり', parts: { ...base, eyes: 'round', brows: 'worried', mouth: 'o', sweat: SWEAT_FEW } },
+  { id: 'surprised', name: 'びっくり', parts: { ...base, eyes: 'round', brows: 'worried', mouth: 'openSmall', sweat: SWEAT_FEW } },
   { id: 'sleep', name: '眠る', parts: { ...base, eyes: 'closed' } },
   // 参考：落ちた・毒を食べたなどで餡子を吐く（白目をむいて青ざめる）
   { id: 'vomit', name: '吐餡', parts: { ...base, eyes: 'shock', brows: 'worried', mouth: 'vomit', tears: 'more', sweat: SWEAT_LOTS, pale: 'lots' } },

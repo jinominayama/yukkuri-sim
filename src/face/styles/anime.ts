@@ -542,7 +542,6 @@ export class AnimeStyle implements FaceStyle {
       case 'sob': this.mouthSob(ctx, open, width); break;
       case 'wail': this.mouthWail(ctx, open, width); break;
       case 'grit': this.mouthGrit(ctx, width); break;
-      case 'o': this.mouthO(ctx, open); break;
       case 'vomit': this.mouthVomit(ctx, open, width); break;
       case 'none': break;
     }
@@ -907,26 +906,6 @@ export class AnimeStyle implements FaceStyle {
     this.strokeVar(ctx, top, lw * 1.4, lw * 1.6, lw * 1.4);
     this.strokeVar(ctx, left, lw * 1.0, lw * 1.4, lw * 1.4);
     this.strokeVar(ctx, right, lw * 1.4, lw * 1.5, lw * 1.0);
-  }
-
-  protected mouthO(ctx: CanvasRenderingContext2D, open: number): void {
-    const { mouthY: y } = this.layout;
-    const ry = 0.03 + 0.06 * open;
-    this.droolFrom = [0.01, y - ry * 1.5];
-    const shape = new Path2D();
-    shape.ellipse(0, y - ry * 0.5, 0.045 + 0.02 * open, ry, 0, 0, Math.PI * 2);
-    ctx.fillStyle = this.palette.mouth;
-    ctx.fill(shape);
-    ctx.save();
-    ctx.clip(shape);
-    ctx.beginPath();
-    ctx.ellipse(0, y - ry * 1.2, 0.04, ry * 0.64, 0, 0, Math.PI * 2);
-    ctx.fillStyle = this.palette.tongue;
-    ctx.fill();
-    ctx.restore();
-    ctx.strokeStyle = this.palette.line;
-    ctx.lineWidth = this.lineWidth * 1.15;
-    ctx.stroke(shape);
   }
 
   // ---- 口の描画の補助 ----

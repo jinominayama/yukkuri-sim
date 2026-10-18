@@ -35,7 +35,7 @@ interface Level {
 
 const LEVELS: Level[] = [
   {
-    hits: 0, face: { eyes: 'squeeze', brows: 'worried', mouth: 'o' }, atLeast: {}, sweat: [],
+    hits: 0, face: { eyes: 'squeeze', brows: 'worried', mouth: 'openSmall' }, atLeast: {}, sweat: [],
     text: 'ゆっ！？', time: 1.1,
   },
   {

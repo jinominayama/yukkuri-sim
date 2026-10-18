@@ -37,7 +37,6 @@ export type MouthKind =
   | 'sob'       // 泣いて開ける（角ばった斜めの台形）
   | 'wail'      // 大きく開けて泣き叫ぶ（口角が下がる）
   | 'grit'      // 歯を食いしばる
-  | 'o'         // 小さく丸く開ける
   | 'vomit';    // 吐く（縦に大きく開いた口から、餡子があふれて顎を伝う）
 
 import type { FacePart } from './parts';
