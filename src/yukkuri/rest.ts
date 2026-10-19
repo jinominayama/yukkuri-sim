@@ -49,6 +49,8 @@ const TWITCH_RADIUS = 0.9;
 const TWITCH_TREMBLE = 0.03;
 /** 起き上がるのを待つ上限（秒） */
 const WAIT_MAX = 12;
+/** 柔らかくするとき、頭の形を保つ割合（SoftBody.headKeep） */
+const HEAD_KEEP = 0.9;
 /** 気がついてから起き上がるまでの間（秒。寝転がって気絶していたとき。我に返ってから起きる） */
 const GETUP_DELAY = 1.2;
 /** 目を覚ました・気がついたときの顔を出しておく時間（秒） */
@@ -110,6 +112,8 @@ export class Rest {
   private getUpIn = -1;
   private word: Word | null = null;
   private readonly after: AfterFace;
+  /** 柔らかくするとき、頭の形を保つ割合（SoftBody.headKeep） */
+  headKeep = HEAD_KEEP;
 
   constructor(private readonly y: Yukkuri) {
     this.after = new AfterFace(y);
@@ -253,6 +257,8 @@ export class Rest {
     const rate = this.fainted ? SOFTEN_FAINT : goal < y.body.softness ? SOFTEN_SLEEP : HARDEN;
     const k = Math.min(1, dt * rate);
     y.body.softness += (goal - y.body.softness) * k;
+    // 頭の形は保つ（頭まで崩れると、帽子が食い込みを避けて跳ね上がり、フリルが頭を突き抜けて見えた）
+    y.body.headKeep = this.headKeep;
     // 皮のゆるさは倍率が大きいので、対数で寄せる（戻るときに急に張らないように）
     const skinGoal = this.fainted ? this.params.faintSkin : goal < 1 ? this.params.sleepSkin : 1;
     y.body.skinLoose = Math.exp(Math.log(y.body.skinLoose) + (Math.log(skinGoal) - Math.log(y.body.skinLoose)) * k);
@@ -265,7 +271,7 @@ export class Rest {
   }
 
   /**
-   * 気絶中の痙攣：不定期に、短い間隔で何回かビクッとする。ビクッとするたびに体のどこか（上半分）を
+   * 気絶中の痙攣：不定期に、短い間隔で何回かビクッとする。ビクッとするたびに体の横腹のどこかを
    * 外向き・上向きに弾き（柔らかくなった体がぶるんと揺れる）、見た目も一瞬小刻みに震わせる
    */
   private twitch(dt: number): void {
@@ -292,8 +298,8 @@ export class Rest {
     const y = this.y;
     const R = y.shape.radius;
     const c = y.center;
-    // 体の表面のどこか（重心から見てランダムな向き。下半分は地面に押しつけるだけなので上へ寄せる）
-    const dir = new THREE.Vector3(Math.random() * 2 - 1, Math.random() * 0.8 + 0.2, Math.random() * 2 - 1).normalize();
+    // 体の横腹のどこか（重心から見て水平に近いランダムな向き）。頭は弾かない（頭が跳ねると帽子に食い込んで、帽子が跳ね上がる）
+    const dir = new THREE.Vector3(Math.random() * 2 - 1, Math.random() * 0.3 - 0.1, Math.random() * 2 - 1).normalize();
     const p = c.clone().addScaledVector(dir, R * 0.8);
     const s = TWITCH_SPEED * (0.6 + Math.random() * 0.6);
     // 横向きは半分（続けると少しずつ這うように動いてしまう）

@@ -81,6 +81,21 @@ export class SoftBody {
   softness = 1;
   /** 皮のゆるさの倍率：皮の伸びやすさ（edgeCompliance）に掛ける。1 でそのまま、大きいほど皮が伸びてへたる（眠る・気絶） */
   skinLoose = 1;
+  /**
+   * 柔らかくするとき（softness・skinLoose）に頭の形を保つ割合（0〜1）。頭の重み（setHeadWeights）が 1 の所は、
+   * この割合だけ柔らかくするのを打ち消す（頭が崩れると帽子が食い込んで跳ね上がる・フリルが頭を突き抜ける）
+   */
+  headKeep = 0;
+  /** 頂点ごとの頭の重み（0〜1。頭の中ほど 1） */
+  private headW: Float32Array = new Float32Array(0);
+
+  /** 頂点ごとの頭の重みを渡す（静止形状を変えたら渡し直す） */
+  setHeadWeights(w: Float32Array): void {
+    this.headW = w;
+  }
+  /** 頂点ごとの形に戻る強さ・皮のゆるさ（頂点ごとに違うときだけ作る） */
+  private kv: Float32Array = new Float32Array(0);
+  private lv: Float32Array = new Float32Array(0);
   /** 直近ステップで地面に触れていた頂点の数 */
   groundContacts = 0;
 
@@ -340,8 +355,9 @@ export class SoftBody {
       mode === 'hop' ? p.hopStiffness
         : mode === 'prone' ? p.proneStiffness
           : mode === 'supine' ? p.supineStiffness
-            : p.shapeStiffness) * this.softness;
-    const shapeK = 1 - Math.pow(1 - stiffness, dt * 60 / sub);
+            : p.shapeStiffness);
+    const shapeK = 1 - Math.pow(1 - stiffness * this.softness, dt * 60 / sub);
+    const hardK = 1 - Math.pow(1 - stiffness, dt * 60 / sub);
     const upright = Math.max(p.upright, this.actuation.uprightMin ?? 0);
     const uprightK = 1 - Math.pow(1 - upright, dt * 60 / sub);
     const damp = Math.max(0, 1 - p.damping * h);
@@ -351,6 +367,26 @@ export class SoftBody {
     const soft = this.actuation.contactSoft;
     const press = this.actuation.contactPress;
     const contact = soft !== null || press > 0 ? this.contactWeights() : null;
+    // 頂点ごとの形に戻る強さ（頭は柔らかくしすぎない・接地面は柔らかく）と皮のゆるさ。どちらもなければ null（全体で同じ）
+    const head = this.headKeep > 0 && this.headW.length === n && (this.softness < 1 || this.skinLoose !== 1);
+    const cs = contact && soft !== null ? soft : 1;
+    let kv: Float32Array | null = null;
+    let lv: Float32Array | null = null;
+    if (head || (contact && cs < 1)) {
+      kv = this.kv.length === n ? this.kv : (this.kv = new Float32Array(n));
+      for (let i = 0; i < n; i++) {
+        const keep = head ? this.headKeep * this.headW[i] : 0;
+        kv[i] = (shapeK + (hardK - shapeK) * keep) * (contact ? 1 - (1 - cs) * contact[i] : 1);
+      }
+    }
+    const cskin = this.actuation.contactSkin;
+    if (head || (contact && cskin !== 1)) {
+      lv = this.lv.length === n ? this.lv : (this.lv = new Float32Array(n));
+      for (let i = 0; i < n; i++) {
+        const keep = head ? this.headKeep * this.headW[i] : 0;
+        lv[i] = (1 + (this.skinLoose - 1) * (1 - keep)) * (contact ? 1 + (cskin - 1) * contact[i] : 1);
+      }
+    }
 
     for (let s = 0; s < sub; s++) {
       for (let i = 0; i < n; i++) {
@@ -363,9 +399,9 @@ export class SoftBody {
         pos[k + 2] += vel[k + 2] * h;
       }
 
-      this.solveEdges((p.edgeCompliance * this.skinLoose) / (h * h), contact, this.actuation.contactSkin);
+      this.solveEdges((p.edgeCompliance * (lv ? 1 : this.skinLoose)) / (h * h), lv);
       this.solveVolume(p.volumeCompliance / (h * h));
-      this.solveShapeMatching(shapeK, uprightK, contact && soft !== null ? soft : 1, contact);
+      this.solveShapeMatching(shapeK, uprightK, kv);
       this.solveGround(p.friction);
 
       // 速度を更新する。元の形に戻る動き（シェイプマッチングの補正）は、
@@ -657,16 +693,15 @@ export class SoftBody {
     }
   }
 
-  /** contact・skin：接地面の重みと皮のゆるさ（両端の重みの平均だけ、伸びやすさに skin を混ぜる） */
-  private solveEdges(alpha0: number, contact: Float32Array | null = null, skin = 1): void {
+  /** lv：頂点ごとの皮のゆるさ（両端の平均を伸びやすさに掛ける）。null なら全体で同じ */
+  private solveEdges(alpha0: number, lv: Float32Array | null = null): void {
     const { pos, invMass, edges, edgeTarget: edgeLen } = this;
-    const loose = contact !== null && skin !== 1;
     for (let e = 0; e < edgeLen.length; e++) {
       const a = edges[2 * e], b = edges[2 * e + 1];
       const wa = invMass[a], wb = invMass[b];
       const w = wa + wb;
       if (w === 0) continue;
-      const alpha = loose ? alpha0 * (1 + (skin - 1) * 0.5 * (contact[a] + contact[b])) : alpha0;
+      const alpha = lv ? alpha0 * 0.5 * (lv[a] + lv[b]) : alpha0;
       const dx = pos[3 * a] - pos[3 * b];
       const dy = pos[3 * a + 1] - pos[3 * b + 1];
       const dz = pos[3 * a + 2] - pos[3 * b + 2];
@@ -735,8 +770,8 @@ export class SoftBody {
   }
   private contactW = new Float32Array(0);
 
-  /** soft・contact：接地面の柔らかさと頂点ごとの重み（contact[i] だけ k に soft を混ぜる） */
-  private solveShapeMatching(k: number, uprightK: number, soft = 1, contact: Float32Array | null = null): void {
+  /** kv：頂点ごとの形に戻る強さ（null なら全体で k） */
+  private solveShapeMatching(k: number, uprightK: number, kv: Float32Array | null = null): void {
     const { pos, rest, n } = this;
     const c = centroid(pos, this.center);
 
@@ -823,7 +858,7 @@ export class SoftBody {
     }
     // 頂点ごとに強さを変えるとき（接地面を柔らかくする）は、補正の合計が 0 にならず体全体が押される
     // （目標の形に届かない所が片寄っていると、その向きへ進み続ける）。平均を差し引いて、全体は動かさない
-    const varied = contact !== null && soft < 1;
+    const varied = kv !== null;
     let sx = 0, sy = 0, sz = 0;
     for (let i = 0; i < n; i++) {
       if (this.invMass[i] === 0) continue;
@@ -832,7 +867,7 @@ export class SoftBody {
       const gx = c.x + ox + r0.x * qx + r1.x * qy + r2.x * qz;
       const gy = c.y + r0.y * qx + r1.y * qy + r2.y * qz;
       const gz = c.z + oz + r0.z * qx + r1.z * qy + r2.z * qz;
-      const ki = varied ? k * (1 - (1 - soft) * contact[i]) : k;
+      const ki = kv ? kv[i] : k;
       // 端を支点にした送り（ox, oz）は這うための推進なので、弾みの対象から外す
       const dx = (gx - ox - pos[j]) * ki, dy = (gy - pos[j + 1]) * ki, dz = (gz - oz - pos[j + 2]) * ki;
       this.smDelta[j] = dx;

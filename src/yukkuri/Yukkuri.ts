@@ -51,6 +51,9 @@ const MAX_ROLLS_ASIDE = 2;
 const GETUP_SHIFT = 1.6;
 /** 起動・置き直しからこの時間（秒）は、落ちても吐かない（最初に置くときの落下を数えない） */
 const FALL_GRACE = 1;
+/** 頭の重み：静止形状の高さ（底 0〜頭頂 1）のこの範囲で 0 から 1 へ（帽子のかぶさる所） */
+const HEAD_KEEP_FROM = 0.6;
+const HEAD_KEEP_TO = 0.8;
 /** 立ち止まってからこの時間（秒）たったら「落ち着いている」とみなす（跳ねた後の帽子の浮きなどが収まるまで） */
 const STILL_TIME = 1;
 
@@ -188,9 +191,24 @@ export class Yukkuri {
       maxY = Math.max(maxY, physRest[i]);
     }
     this.restHeight = maxY - minY;
+    this.body.setHeadWeights(this.headWeights());
     this.bodyMaterial.uniforms.uBodyHeight.value = this.restHeight;
     this.placeFace();
     this.outfit?.rebuild();
+  }
+
+  /**
+   * 頂点ごとの頭の重み：帽子のかぶさる頭のてっぺん付近（静止形状の高さ HEAD_KEEP_FROM〜TO より上）ほど 1。
+   * 眠る・気絶で柔らかくするとき、そこだけ形を保つのに使う（SoftBody.headKeep）。下の体はそのままへたる
+   */
+  private headWeights(): Float32Array {
+    const rest = this.body.rest;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 1; i < rest.length; i += 3) { lo = Math.min(lo, rest[i]); hi = Math.max(hi, rest[i]); }
+    const H = Math.max(hi - lo, 1e-6);
+    const w = new Float32Array(rest.length / 3);
+    for (let i = 0; i < w.length; i++) w[i] = THREE.MathUtils.smoothstep((rest[3 * i + 1] - lo) / H, HEAD_KEEP_FROM, HEAD_KEEP_TO);
+    return w;
   }
 
   /** 体型プリセットを適用する（形・柔らかさ・運動能力）。その場で置き直す */
