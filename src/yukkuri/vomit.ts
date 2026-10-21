@@ -122,8 +122,6 @@ const SWEAT = 'forehead,templeL,templeR,cheekL,cheekR,mouthL,mouthR,bodyL,bodyC,
 
 /** 文字 */
 const SURGE_WORDS = ['ゆげぇえええ', 'ゴポォ', 'ゆごぼっ', 'ゴボッ', 'げぼぉっ'];
-const SHOCK_WORDS = ['ゆ゛っ…！？', 'ゆぐっ…！？', 'ゆ゛…ゆ゛ぅ…！？'];
-const AFTER_WORDS = ['ゆ…ゆげぇ…', 'あんこさん…でちゃった…', 'ゆぅ…きもちわるい…', 'ゆっくり…できない…'];
 
 interface Lump {
   p: THREE.Vector3;
@@ -334,7 +332,7 @@ export class Vomit {
     this.yaw = y.body.yaw;
     showFace(y, this.shockFace ? FACE_SHOCK_EYES : FACE_CRY_EYES, AT_LEAST_SHOCK);
     this.addSweat();
-    this.say(pick(SHOCK_WORDS), 1.0, 0.28);
+    this.say(this.y.line('vomitShock'), 1.0, 0.28);
   }
 
   /** 吐き始める：こみ上げる回数と長さを決め、吐いたものを置く場所を用意する */
@@ -415,7 +413,7 @@ export class Vomit {
     this.current = null;
     showFace(y, FACE_AFTER, AT_LEAST_AFTER);
     this.addSweat();
-    this.say(pick(AFTER_WORDS), AFTER_TIME * 0.8, 0.26);
+    this.say(this.y.line('vomitAfter'), AFTER_TIME * 0.8, 0.26);
   }
 
   private finish(): void {

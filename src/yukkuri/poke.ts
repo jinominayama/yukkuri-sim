@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { SWEAT_SPOTS, selectedIds, type PartSelection } from '../face/parts';
-import { bodyFacing, pick, showFace, type Word } from './fx';
+import { bodyFacing, showFace, type Word } from './fx';
 import { loadJSON, saveJSON } from '../platform/storage';
+import type { LineKey } from './lines';
 import type { Yukkuri } from './Yukkuri';
 
 /**
@@ -42,7 +43,6 @@ const SLAP_CRY_SHAKE = 12;
 const CRY_TREMBLE = 0.008;
 const CRY_TREMBLE_FADE = 1;
 const SLAP_SOB_EVERY = 2.6;
-const SLAP_SOBS = ['ゆっぐ…ひっぐ…', 'ゆぐっ…', 'いぢゃい…', 'ゆえぇぇん…', 'ひっく…ゆっく…', 'もう…やだ…', 'どぼじで…'];
 const CRY_FACE: Partial<PartSelection> = { eyes: 'cry', brows: 'worried', mouth: 'sob' };
 const CRY_AT_LEAST: Partial<PartSelection> = { tears: 'lots', stream: 'few' };
 const CRY_SWEAT = ['forehead', 'templeL', 'templeR'];
@@ -82,8 +82,8 @@ interface Level {
   atLeast: Partial<PartSelection>;
   /** 汗を出す場所（選んでいる場所に足す） */
   sweat: string[];
-  /** 言うこと（どれか 1 つ） */
-  texts: string[];
+  /** 言うこと（セリフの場面。キャラクターと口調で選ぶ） */
+  line: LineKey;
   /** 顔を出しておく時間（秒） */
   time: number;
 }
@@ -91,19 +91,19 @@ interface Level {
 const LEVELS: Level[] = [
   {
     hits: 0, face: { eyes: 'squeeze', brows: 'worried', mouth: 'openSmall' }, atLeast: {}, sweat: [],
-    texts: ['ゆっ！？', 'ゆゆっ！？', 'ゆびっ！？', 'なにするの！？'], time: 1.1,
+    line: 'poke1', time: 1.1,
   },
   {
     hits: 1.6, face: { eyes: 'tearyNarrow', brows: 'worried', mouth: 'sob' }, atLeast: { tears: 'few' },
-    sweat: ['forehead', 'templeL', 'templeR'], texts: ['ゆっ…！', 'やめてね！', 'いたいよ…！', 'ゆっくりさせてね！'], time: 1.6,
+    sweat: ['forehead', 'templeL', 'templeR'], line: 'poke2', time: 1.6,
   },
   {
     hits: 3.4, face: { eyes: 'cry', brows: 'worried', mouth: 'grit' }, atLeast: { tears: 'more', stream: 'few' },
-    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR'], texts: ['ゆぐっ…！', 'いだいぃ…！', 'やめでね…！', 'ゆぎぃ…！'], time: 2.2,
+    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR'], line: 'poke3', time: 2.2,
   },
   {
     hits: 5.2, face: { eyes: 'cry', brows: 'worried', mouth: 'wail' }, atLeast: { tears: 'lots', stream: 'lots' },
-    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR', 'mouthL', 'mouthR'], texts: ['やべでぇぇ！', 'もうやめでぇぇ！', 'ゆっぐりでぎないぃぃ！', 'どぼじでごんなごどずるのぉぉ！'], time: 3.0,
+    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR', 'mouthL', 'mouthR'], line: 'poke4', time: 3.0,
   },
 ];
 
@@ -111,19 +111,19 @@ const LEVELS: Level[] = [
 const SLAP_LEVELS: Level[] = [
   {
     hits: 0, face: { eyes: 'squeeze', brows: 'worried', mouth: 'wail' }, atLeast: { tears: 'more' },
-    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR'], texts: ['ゆびぃっ！？', 'ゆぎゃっ！？', 'いぢゃっ！？'], time: 2.0,
+    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR'], line: 'slap1', time: 2.0,
   },
   {
     hits: 3, face: { eyes: 'cry', brows: 'worried', mouth: 'wail' }, atLeast: { tears: 'lots', stream: 'few' },
-    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR', 'mouthL', 'mouthR'], texts: ['いぢゃいぃぃ！', 'いだいよぉぉ！', 'ゆびぇぇぇん！'], time: 2.6,
+    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR', 'mouthL', 'mouthR'], line: 'slap2', time: 2.6,
   },
   {
     hits: 6, face: { eyes: 'shock', brows: 'worried', mouth: 'wail' }, atLeast: { tears: 'lots', stream: 'lots', pale: 'some' },
-    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR', 'mouthL', 'mouthR', 'bodyL', 'bodyR'], texts: ['ゆぎゃあああ！！', 'ゆぎぃぃぃ！！', 'あんござんがでちゃうぅぅ！！'], time: 3.0,
+    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR', 'mouthL', 'mouthR', 'bodyL', 'bodyR'], line: 'slap3', time: 3.0,
   },
   {
     hits: 9, face: { eyes: 'cry', brows: 'worried', mouth: 'wail', strain: 'max' }, atLeast: { tears: 'lots', stream: 'lots', pale: 'lots' },
-    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR', 'mouthL', 'mouthR', 'bodyL', 'bodyC', 'bodyR'], texts: ['やべでえぇぇ！！', 'ゆっぐりざぜでぇぇ！！', 'ごべんなざいぃぃ！！'], time: 3.5,
+    sweat: ['forehead', 'templeL', 'templeR', 'cheekL', 'cheekR', 'mouthL', 'mouthR', 'bodyL', 'bodyC', 'bodyR'], line: 'slap4', time: 3.5,
   },
 ];
 
@@ -211,7 +211,7 @@ export class Poke {
     const pos = new THREE.Vector3(y.center.x, y.center.y + y.height * 0.5 + R * 0.15, y.center.z)
       .addScaledVector(facing, R * 0.6).addScaledVector(sideDir, this.side * R * 0.5);
     if (this.word) y.texts.fade(this.word);
-    this.word = y.texts.say(pick(level.texts), pos, R * (slap ? 0.38 : 0.3), level.time, new THREE.Vector3(0, R * 0.25, 0).addScaledVector(sideDir, this.side * R * 0.15));
+    this.word = y.texts.say(y.line(level.line), pos, R * (slap ? 0.38 : 0.3), level.time, new THREE.Vector3(0, R * 0.25, 0).addScaledVector(sideDir, this.side * R * 0.15));
   }
 
   /** 調整値を保存する */
@@ -311,7 +311,7 @@ export class Poke {
       const pos = new THREE.Vector3(y.center.x, y.center.y + y.height * 0.4, y.center.z)
         .addScaledVector(facing, R * 0.6).addScaledVector(sideDir, this.side * R * 0.6);
       if (this.word) y.texts.fade(this.word);
-      this.word = y.texts.say(pick(SLAP_SOBS), pos, R * 0.22, 1.8,
+      this.word = y.texts.say(y.line('slapSob'), pos, R * 0.22, 1.8,
         new THREE.Vector3(0, R * 0.12, 0));
     }
   }

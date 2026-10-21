@@ -31,21 +31,6 @@ const GIVE_UP = 20;
 const MAX_RANGE = 4.5;
 
 /** 嫌がる一言（跳ねて離れるとき＝まだ元気、這って離れるとき＝ぐったり） */
-const LINES_HOP = [
-  'ここはゆっくりできないよ！',
-  'くさいよ！ゆっくりできないよ！',
-  'ゆっくりできないものがあるよ！',
-  'こんなところじゃゆっくりできないよ！',
-  'ゆっくりしないでおひっこしするよ！',
-  'ゆゆっ！？きたないよ！',
-];
-const LINES_CRAWL = [
-  'ここは…ゆっくりできない…よ…',
-  'もう…やだ…ゆっくりしたい…',
-  'ゆぅ…くさくて…ゆっくりできない…',
-  'ゆっくり…できるところに…いきたい…',
-  'どぼじで…ゆっくりできないの…',
-];
 /** 顔：跳ねるときは怒って顔をしかめる、這うときは困って泣きそう */
 const FACE_HOP: Partial<PartSelection> = { eyes: 'half', brows: 'angry', mouth: 'grit' };
 const FACE_CRAWL: Partial<PartSelection> = { eyes: 'tearyNarrow', brows: 'worried', mouth: 'sob' };
@@ -107,8 +92,7 @@ export class Flee {
     const y = this.y;
     this.nearFor = 0;
     const crawl = y.stress.value >= STRESS_CRAWL || !y.move.canHop;
-    const lines = crawl ? LINES_CRAWL : LINES_HOP;
-    this.say(lines[Math.floor(Math.random() * lines.length)]);
+    this.say(y.line(crawl ? 'fleeCrawl' : 'fleeHop'));
     if (!y.face.override) {
       showFace(y, crawl ? FACE_CRAWL : FACE_HOP, crawl ? { tears: 'few' } : {});
       this.face = y.face.override;

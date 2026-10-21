@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import type { PartSelection } from '../face/parts';
 import { loadJSON, remove, saveJSON } from '../platform/storage';
-import { bodyFacing, pick, showFace, type Word } from './fx';
+import { bodyFacing, showFace, type Word } from './fx';
+import type { LineKey } from './lines';
 import type { Yukkuri } from './Yukkuri';
 
 /**
@@ -68,18 +69,18 @@ const FIT_KEY = 'moruFit';
 const LEGACY_WAG_KEY = 'moruWag';
 
 /** 顔ごとの表情（目・眉・口は差し替え、涙などは足りないときだけ足す）・汗の場所・ときどき言うこと */
-const MOODS: Record<Mood, { face: Partial<PartSelection>; atLeast: Partial<PartSelection>; sweat: string; say: string[] }> = {
+const MOODS: Record<Mood, { face: Partial<PartSelection>; atLeast: Partial<PartSelection>; sweat: string; say: LineKey }> = {
   happy: {
     face: { eyes: 'smile', brows: 'neutral', mouth: 'smile' }, atLeast: { blush: 'mild' }, sweat: '',
-    say: ['おちりふーりふーり♪', 'もるんもるん♪', 'ふーりふーりするよ♪', 'ゆっくりしていってね♪'],
+    say: 'moruHappy',
   },
   desperate: {
     face: { eyes: 'tearyNarrow', brows: 'worried', mouth: 'grit' }, atLeast: { tears: 'few' },
-    sweat: 'forehead,templeL,templeR,cheekL,cheekR', say: ['にげりゅよっ！', 'ゆっくりしないでにげるよ！', 'つかまらないよっ！', 'ゆわわわわっ！'],
+    sweat: 'forehead,templeL,templeR,cheekL,cheekR', say: 'moruDesperate',
   },
   cry: {
     face: { eyes: 'squeeze', brows: 'worried', mouth: 'wail' }, atLeast: { tears: 'lots', stream: 'few' },
-    sweat: 'forehead,templeL,templeR', say: ['ゆえぇぇぇん！', 'ゆっくりできないよぉぉ！', 'おうちかえるぅぅ！', 'だれかたすけてぇぇ！'],
+    sweat: 'forehead,templeL,templeR', say: 'moruCry',
   },
 };
 const MOOD_LIST: Mood[] = ['happy', 'desperate', 'cry'];
@@ -270,7 +271,7 @@ export class Moru {
     const facing = bodyFacing(y);
     const pos = new THREE.Vector3(y.center.x, y.center.y + R * 1.6, y.center.z).addScaledVector(facing, R * 0.9);
     if (this.word) y.texts.fade(this.word);
-    this.word = y.texts.say(pick(MOODS[this.mood].say), pos, R * 0.24, 2.2, new THREE.Vector3(0, R * 0.12, 0));
+    this.word = y.texts.say(y.line(MOODS[this.mood].say), pos, R * 0.24, 2.2, new THREE.Vector3(0, R * 0.12, 0));
   }
 
   /** 食べている・うんうん・体操・吐いている最中か */

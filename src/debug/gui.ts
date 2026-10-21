@@ -8,6 +8,7 @@ import { STYLES } from '../face/styles';
 import { createFacePanel } from './facePanel';
 import { CHARACTERS } from '../character';
 import { MORU_WAG_MAX } from '../yukkuri/moru';
+import { voicesOf } from '../yukkuri/lines';
 import { allPresets, findPreset, isOverridden, resetPreset, saveLastPresetId, savePreset, USER_PRESET_ID } from '../yukkuri/presets';
 
 export interface ViewSettings {
@@ -262,8 +263,22 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       const iris = outfit.character.iris;
       if (iris) { y.face.settings.iris = iris; y.face.save(); }
       hairPanel.rebuild();
+      refreshVoice();
       refresh();
     }));
+  // 口調：キャラクターごとに選ぶ（口調のないキャラクターでは隠す）
+  const voiceState = { id: y.voice.id };
+  let voiceCtrl = chara.add(voiceState, 'id', {}).name('口調');
+  noLock(voiceCtrl);
+  const refreshVoice = () => {
+    const list = voicesOf(outfit.characterId);
+    voiceState.id = y.voice.id;
+    voiceCtrl = voiceCtrl.options(Object.fromEntries(list.map((v) => [v.name, v.id]))).name('口調')
+      .onChange((id: string) => { y.voice.id = id; });
+    noLock(voiceCtrl);
+    voiceCtrl.show(list.length > 0);
+  };
+  refreshVoice();
   noLock(chara.add(outfit.params, 'showHair').name('髪').onChange(() => { outfit.applyVisibility(); saveOutfit(); }));
   noLock(chara.add(outfit.params, 'showHat').name('帽子').onChange(() => { outfit.applyVisibility(); saveOutfit(); }));
   noLock(chara.add(outfit.params, 'showBraid').name('三つ編み').onChange(() => { outfit.applyVisibility(); saveOutfit(); }));

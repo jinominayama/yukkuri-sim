@@ -20,6 +20,7 @@ import { Stress } from './stress';
 import { Flee } from './flee';
 import { Rest } from './rest';
 import { Puku } from './puku';
+import { Voice, type LineKey } from './lines';
 import { faceFrame, TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
@@ -100,6 +101,8 @@ export class Yukkuri {
   readonly rest: Rest;
   /** ぷくー（体をふくらませて威嚇する） */
   readonly puku: Puku;
+  /** セリフの口調（キャラクターごとに選ぶ。保存する） */
+  readonly voice: Voice;
   /** 見ている人（カメラ）の位置。ぷくーでその方を向く。main が渡す */
   viewer: THREE.Vector3 | null = null;
   /** 呼吸の大きさ・速さの倍率（眠っている間は大きくゆっくり。設定の値に掛ける） */
@@ -152,6 +155,7 @@ export class Yukkuri {
     this.root.add(this.shadow, this.outline, this.bodyMesh);
 
     this.outfit = new Outfit(render.geometry, this.bodyMaterial, this.outlineMaterial);
+    this.voice = new Voice(() => this.outfit.characterId);
     this.root.add(this.outfit.object);
     this.outfit.usePreset(this.presetId);
 
@@ -318,6 +322,11 @@ export class Yukkuri {
       THREE.MathUtils.clamp(ax / GAZE_FULL_X, -1, 1) * GAZE_MAX_X,
       THREE.MathUtils.clamp(ay / GAZE_FULL_Y, -1, 1) * GAZE_MAX_Y,
     ];
+  }
+
+  /** 場面 key のセリフを 1 つ選ぶ（今のキャラクターと口調から） */
+  line(key: LineKey): string {
+    return this.voice.line(key);
   }
 
   /** 点 point を方向 dir につつく（へこんで弾み、驚いた顔をする） */

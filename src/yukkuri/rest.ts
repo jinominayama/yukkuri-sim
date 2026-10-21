@@ -64,11 +64,6 @@ const FACE_FAINT: Partial<PartSelection> = { eyes: 'cross', brows: 'worried', mo
 const FAINT_EYES = ['cross', 'swirl', 'shock'];
 const FACE_COME_TO: Partial<PartSelection> = { eyes: 'troubled', brows: 'worried', mouth: 'openSmall' };
 
-const DOZE_WORDS = ['ゆぅ…ねむいよ…', 'ゆっくり…おやすみ…', 'ゆふぁ～…'];
-const SNORE_WORDS = ['すーやすーや', 'ゆぅ…ゆぅ…', 'むにゃむにゃ…', 'すーや…すーや…', 'もう…たべられないよ…', 'ゆっくり…してるよ…'];
-const WAKE_WORDS = ['ゆっくりおきたよ！', 'ゆっ！？', 'ゆふぁ～…よくねたよ！', 'ゆっくりしていってね！'];
-const FAINT_WORDS = ['ゆ゛っ…', 'ゆ…ぐ…', 'ゆきゅ～…'];
-const COME_TO_WORDS = ['ゆ…ゆっくり…？', 'ゆぅ…ここは…？', 'ゆっ…！？なにがあったの…？'];
 
 type SleepPhase = 'none' | 'wait' | 'doze' | 'sleep';
 
@@ -164,7 +159,7 @@ export class Rest {
     y.face.override = null;
     y.locomotion.release();
     if (!quiet && wasAsleep) {
-      this.word = sayAbove(y, this.word, pick(WAKE_WORDS), 1.8);
+      this.word = sayAbove(y, this.word, this.y.line('wake'), 1.8);
       this.after.show(FACE_WAKE);
     }
   }
@@ -193,7 +188,7 @@ export class Rest {
     this.jerksLeft = 0;
     showFace(y, { ...FACE_FAINT, eyes: pick(FAINT_EYES) });
     if (y.face.override) y.face.override.sweat = 'forehead,templeL,templeR';
-    this.word = sayAbove(y, this.word, pick(FAINT_WORDS), 1.6, 0.26);
+    this.word = sayAbove(y, this.word, this.y.line('faint'), 1.6, 0.26);
     return true;
   }
 
@@ -205,7 +200,7 @@ export class Rest {
     y.tremble = 0;
     y.face.override = null;
     y.locomotion.release();
-    this.word = sayAbove(y, this.word, pick(COME_TO_WORDS), 2.2);
+    this.word = sayAbove(y, this.word, this.y.line('comeTo'), 2.2);
     this.after.show(FACE_COME_TO);
     // 寝転がって（倒れて）いたら、少し間を置いてから起き上がる
     this.getUpIn = y.locomotion.isLying ? GETUP_DELAY : -1;
@@ -238,7 +233,7 @@ export class Rest {
         this.snoreIn -= dt;
         if (this.snoreIn <= 0) {
           this.snoreIn = SNORE_EVERY;
-          this.word = sayAbove(y, this.word, pick(SNORE_WORDS), 2.6, 0.2);
+          this.word = sayAbove(y, this.word, this.y.line('snore'), 2.6, 0.2);
         }
         break;
     }
@@ -311,7 +306,7 @@ export class Rest {
     this.sleepPhase = 'doze';
     this.t = 0;
     showFace(this.y, FACE_DOZE);
-    this.word = sayAbove(this.y, this.word, pick(DOZE_WORDS), 2.0);
+    this.word = sayAbove(this.y, this.word, this.y.line('doze'), 2.0);
   }
 
   /** 食べる・うんうん・体操・吐餡・もるんもるんの最中か */
