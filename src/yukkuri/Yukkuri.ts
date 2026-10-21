@@ -21,6 +21,7 @@ import { Flee } from './flee';
 import { Rest } from './rest';
 import { Puku } from './puku';
 import { Branch } from './branch';
+import { Forage } from './forage';
 import { Voice, type LineKey } from './lines';
 import { faceFrame, TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
@@ -104,6 +105,8 @@ export class Yukkuri {
   readonly puku: Puku;
   /** 枝（三つ編みで持つ。branch.object をシーンに置いて表示する） */
   readonly branch: Branch;
+  /** 餌集め（三つ編みで拾って帽子のつばに乗せる。forage.object をシーンに置いて表示する） */
+  readonly forage: Forage;
   /** セリフの口調（キャラクターごとに選ぶ。保存する） */
   readonly voice: Voice;
   /** 見ている人（カメラ）の位置。ぷくーでその方を向く。main が渡す */
@@ -176,6 +179,7 @@ export class Yukkuri {
     this.rest = new Rest(this);
     this.puku = new Puku(this);
     this.branch = new Branch(this);
+    this.forage = new Forage(this);
     this.puku.usePreset(this.presetId);
     this.peni = new Peni(this);
     this.peni.usePreset(this.presetId);
@@ -378,6 +382,7 @@ export class Yukkuri {
     this.rest.update(dt); // 眠る・気絶（ほかの動きが始まったら起こすので、それらの後の判断で足りる）
     this.puku.update(dt); // ぷくー（身ぶりの向きを移動の処理より先に指示する）
     this.branch.update(dt);
+    this.forage.update(dt);
     this.vomit.update(dt); // 吐くときの身ぶりも移動の処理より先に指示する
     this.exercise.update(dt); // 体操の身ぶりを移動の処理より先に指示する
     this.locomotion.update(dt, this.physics.gravity);
@@ -405,6 +410,7 @@ export class Yukkuri {
     const still = this.locomotion.idleTime > STILL_TIME;
     this.outfit.update(still);
     this.branch.sync(); // 三つ編みの毛先が決まった後で
+    this.forage.sync(); // 帽子と三つ編みの毛先が決まった後で
     this.peni.update(still);
     this.dropping.sync();
     this.vomit.sync();

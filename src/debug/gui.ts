@@ -224,6 +224,17 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   branch.add({ f: () => y.branch.toggleHold() }, 'f').name('持つ／離す');
   branch.add({ f: () => y.branch.clear() }, 'f').name('片付ける');
 
+  // 餌集め：小さな餌を 1 個ずつ出し、三つ編みで拾って帽子のつばに乗せる
+  const forage = doGroup.addFolder('餌集め');
+  noLock(forage.add(y.forage, 'kindId', { ランダム: 'random', 木の実: 'acorn', 草: 'grass', 虫: 'bug' }).name('出す餌'));
+  forage.add({ f: () => y.forage.spawn() }, 'f').name('餌を出す');
+  forage.add({ f: () => y.forage.pickNearest() }, 'f').name('拾う（近いものから）');
+  forage.add({ f: () => y.forage.spill(false) }, 'f').name('帽子の餌を落とす');
+  forage.add({ f: () => y.forage.clear() }, 'f').name('片付ける');
+  const forageView = { count: '' };
+  forage.add(forageView, 'count').name('帽子の上').disable().listen();
+  setInterval(() => (forageView.count = `${y.forage.onHat} / 8 個（地面 ${y.forage.onGround} 個）`), 200);
+
   // ぷくー：体をふくらませて威嚇する（ボタンで始める。もう一度押すとしぼむ）
   const puku = doGroup.addFolder('ぷくー');
   puku.add({ f: () => y.puku.toggle() }, 'f').name('ぷくーする／やめる');

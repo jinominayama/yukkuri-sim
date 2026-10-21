@@ -523,6 +523,31 @@ export class WitchHat implements Accessory {
   }
 
   /**
+   * つばの上の置き場：帽子の前（向き 0）から angle（rad。上から見て反時計回り＝帽子の左が +）、円錐の根元からつばの縁までの
+   * rFrac（0〜1）の所の、つばの上面の点（ワールド）と、帽子の上向き（単位ベクトル）。物を帽子に乗せるのに使う
+   */
+  brimSpot(angle: number, rFrac: number, pos: THREE.Vector3, up: THREE.Vector3): void {
+    const r = CROWN_FOOT + (this.brimR - CROWN_FOOT) * rFrac;
+    pos.set(Math.sin(angle) * r, this.brimTop(r), Math.cos(angle) * r).applyMatrix4(this.object.matrix);
+    const e = this.object.matrix.elements;
+    up.set(e[4], e[5], e[6]).normalize();
+  }
+
+  /** 帽子の向き：横（帽子の左が +）・上・前（単位ベクトル） */
+  axes(side: THREE.Vector3, up: THREE.Vector3, front: THREE.Vector3): void {
+    const e = this.object.matrix.elements;
+    side.set(e[0], e[1], e[2]).normalize();
+    up.set(e[4], e[5], e[6]).normalize();
+    front.set(e[8], e[9], e[10]).normalize();
+  }
+
+  /** 帽子の上向き（単位ベクトル） */
+  upVector(out: THREE.Vector3): THREE.Vector3 {
+    const e = this.object.matrix.elements;
+    return out.set(e[4], e[5], e[6]).normalize();
+  }
+
+  /**
    * 点 p（体と同じ座標）が帽子の下（つばの内側で、フリルの裾より上）に隠れているか。
    * 三つ編みの編み始めを帽子の外へ出すのに使う。margin：裾より下へこれだけ（帽子の単位）までは隠れているとみなす
    */
@@ -791,6 +816,8 @@ function crownBase(t: number, a: number): number {
   return 1.15 * Math.pow(1 - t, 0.8) * (1 + CROWN_WAVE * Math.sin(a * 5 + t * 6)) + 0.005;
 }
 const CROWN_WAVE = 0.025;
+/** 円錐の根元の半径（つばの置き場の内側。crownBase(0, a) とほぼ同じ） */
+const CROWN_FOOT = 1.15;
 /** つばの上面の高さ（つばの形の内側の高さ） */
 const BRIM_TOP = 0.035;
 /** 円錐の当たり判定の段の数 */

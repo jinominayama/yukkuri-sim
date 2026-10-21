@@ -238,6 +238,12 @@ export class Outfit {
     return best;
   }
 
+  /** 帽子（表示しているときだけ。物を乗せるのに使う） */
+  get hat(): WitchHat | null {
+    if (!this.params.showHat) return null;
+    return this.accessories.find((a): a is WitchHat => a instanceof WitchHat) ?? null;
+  }
+
   /** 三つ編み（表示しているときだけ。物を持つのに使う） */
   get braid(): Braid | null {
     if (!this.params.showBraid) return null;

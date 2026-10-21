@@ -1,6 +1,6 @@
 /**
  * 食べ物の種類。品質ごとに、食べたときに減るストレスが違う（減る量は Stress の params.meal）。
- * 今あるのはおまんじゅう 1 種類で、中間品質（指示）。今後、種類を足していく
+ * おまんじゅう（ごはん）は中間品質（指示）。餌集めの小さな餌：木の実（中間品質）・草と虫（低品質）
  */
 export type FoodQuality = 'low' | 'normal' | 'high';
 
@@ -14,7 +14,16 @@ export interface FoodKind {
 
 export const FOODS: FoodKind[] = [
   { id: 'manju', name: 'おまんじゅう', quality: 'normal' },
+  // 餌集めで拾う小さな餌（帽子のつばに乗せる）
+  { id: 'acorn', name: '木の実', quality: 'normal' },
+  { id: 'grass', name: '草', quality: 'low' },
+  { id: 'bug', name: '虫', quality: 'low' },
 ];
+
+/** id の食べ物 */
+export function findFood(id: string): FoodKind {
+  return FOODS.find((f) => f.id === id) ?? FOODS[0];
+}
 
 /** 「食べ物をあげる」で出すもの */
 export const DEFAULT_FOOD = FOODS[0];

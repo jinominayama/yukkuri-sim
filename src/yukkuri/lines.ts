@@ -15,7 +15,8 @@ export type LineKey =
   | 'fleeHop' | 'fleeCrawl'
   | 'vomitShock' | 'vomitAfter'
   | 'doze' | 'snore' | 'wake' | 'faint' | 'comeTo'
-  | 'branchGo' | 'branchLower' | 'branchPick' | 'branchDrop';
+  | 'branchGo' | 'branchLower' | 'branchPick' | 'branchDrop'
+  | 'forageGo' | 'forageLower' | 'forageOnHat' | 'forageFull' | 'forageBusy' | 'forageSpill';
 
 type Lines = Record<LineKey, string[]>;
 
@@ -54,6 +55,12 @@ const COMMON: Lines = {
     'さいきょうのえださんだよ！', 'ゆっくりしたえださんだね！', 'まりさのたからものにするよ！',
   ],
   branchDrop: ['ゆっ', 'ぽいっ', 'ゆ…おちちゃった', 'えださん…ばいばい', 'ゆゆっ！？えださんが…'],
+  forageGo: ['ごはんさんみつけたよ！', 'ゆっ！ごはんさんだよ！', 'あつめるよ！', 'ゆっくりあつめるよ！'],
+  forageLower: ['んしょ', 'よいしょ', 'ゆっ'],
+  forageOnHat: ['ぽいっ♪', 'おぼうしにしまうよ！', 'ゆっくりためておくよ！', 'いっぱいあつめるよ！', 'ゆっへん！'],
+  forageFull: ['もうのらないよ…', 'おぼうしがいっぱいだよ！', 'ゆぅ…これいじょうはむりだよ…'],
+  forageBusy: ['おさげがふさがってるよ…', 'えださんでいっぱいだよ！'],
+  forageSpill: ['ゆあぁっ！？ごはんさんが！', 'ゆぅ…おちちゃった…', 'まりさのごはんさんがぁ！', 'ゆっくりあつめたのにぃ…'],
 };
 
 /** 魔理沙の「のぜ」口調（〜なのぜ・〜だぜ）。叫び・泣き声など口調の出ないものは共通と同じ */
@@ -89,6 +96,12 @@ const MARISA_NOZE: Partial<Lines> = {
     'まりさたんけんたいなのぜ！', 'これでまりさはむてきなのぜ！', 'ゆっくりしたえださんなのぜ！',
   ],
   branchDrop: ['ゆっ', 'ぽいっ', 'ゆ…おちたのぜ', 'えださん…ばいばいなのぜ', 'ゆゆっ！？まりさのえださんが…！'],
+  forageGo: ['ごはんさんみつけたのぜ！', 'ゆっ！ごはんさんなのぜ！', 'あつめるのぜ！', 'まりさがぜんぶもらうのぜ！'],
+  forageLower: ['んしょ', 'ゆっしょ', 'ゆっ'],
+  forageOnHat: ['ぽいっ♪', 'おぼうしにしまうのぜ！', 'たくわえておくのぜ！', 'まりさのおぼうしはべんりなのぜ！', 'ゆっへん！'],
+  forageFull: ['もうのらないのぜ…', 'おぼうしがいっぱいなのぜ！', 'ゆぅ…これいじょうはむりなのぜ…'],
+  forageBusy: ['おさげがふさがってるのぜ…', 'えださんでいっぱいなのぜ！'],
+  forageSpill: ['ゆあぁっ！？ごはんさんが！', 'ゆぅ…おちたのぜ…', 'まりさのごはんさんがぁ！', 'せっかくあつめたのにぃ…なのぜ'],
 };
 
 export interface VoiceDef {

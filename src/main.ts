@@ -65,6 +65,7 @@ scene.add(yukkuri.dropping.object);
 scene.add(yukkuri.vomit.object);
 scene.add(yukkuri.texts.object);
 scene.add(yukkuri.branch.object);
+scene.add(yukkuri.forage.object);
 yukkuri.drop(0.6);
 // 帽子の先まで入るよう、少し上を見て少し引く
 controls.target.set(0, yukkuri.height * 0.7, 0);

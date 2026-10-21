@@ -178,6 +178,7 @@ export class Poke {
     y.body.addVelocity(shove.x, 0, shove.z);
     this.hits += slap ? SLAP_HITS : 1;
     y.stress.add(slap ? y.stress.params.slap : y.stress.params.poke);
+    if (slap) y.forage.spill(); // 叩かれると帽子のつばの餌は落ちる
     // 押された量をためて、届いたら倒れる（立っているとき）・転がる（寝転んでいるとき）
     this.knockOver(slap, strength);
     if (slap) {
