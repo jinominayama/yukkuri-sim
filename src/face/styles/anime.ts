@@ -224,7 +224,9 @@ export class AnimeStyle implements FaceStyle {
 
     // 瞳：目頭寄りの縦長の楕円。上半分はまぶたの影でほぼ黒く、下に明るい三日月
     const iris = state.look.iris;
-    const [ix, iy] = P(-0.16 + look[0], -0.04 + look[1]);
+    // 視線（gaze）は両目とも同じ向きへ：目の座標は左右の目で鏡写しなので、横は s を掛けて打ち消す
+    const gz = state.gaze ?? [0, 0];
+    const [ix, iy] = P(-0.16 + look[0] + s * gz[0], -0.04 + look[1] + gz[1]);
     const rx = 0.64 * w, ry = 0.98 * h;
     const g = ctx.createLinearGradient(0, iy + ry, 0, iy - ry);
     g.addColorStop(0, mix(iris, '#000000', 0.9));

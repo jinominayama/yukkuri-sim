@@ -107,6 +107,8 @@ export interface FaceState {
   look: FaceLook;
   /** まばたきでまぶたが閉じている量 0〜1 */
   blink: number;
+  /** 視線のずれ（見る人から見て右 +・上 +。目の半幅・半高に対する比。両目とも同じ向きへ）。物を見るときなど */
+  gaze?: [number, number];
 }
 
 export interface FaceStyle {

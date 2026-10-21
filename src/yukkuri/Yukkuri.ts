@@ -20,7 +20,7 @@ import { Stress } from './stress';
 import { Flee } from './flee';
 import { Rest } from './rest';
 import { Puku } from './puku';
-import { TextFx } from './fx';
+import { faceFrame, TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
 
 /** 物理メッシュと描画メッシュの細かさ */
@@ -51,6 +51,11 @@ const MAX_ROLLS_ASIDE = 2;
 const GETUP_SHIFT = 1.6;
 /** 起動・置き直しからこの時間（秒）は、落ちても吐かない（最初に置くときの落下を数えない） */
 const FALL_GRACE = 1;
+/** 視線：この角度（rad）で瞳を端まで寄せる（左右・上下）と、そのときのずれ（目の半幅・半高に対する比） */
+const GAZE_FULL_X = 1.0;
+const GAZE_FULL_Y = 0.8;
+const GAZE_MAX_X = 0.42;
+const GAZE_MAX_Y = 0.38;
 /** 頭の重み：静止形状の高さ（底 0〜頭頂 1）のこの範囲で 0 から 1 へ（帽子のかぶさる所） */
 const HEAD_KEEP_FROM = 0.6;
 const HEAD_KEEP_TO = 0.8;
@@ -289,6 +294,30 @@ export class Yukkuri {
     const fall = this.airTop - b.center.y;
     this.airTop = null;
     if (this.time > this.fallFrom) this.vomit.landed(fall);
+  }
+
+  /**
+   * 視線を点 p（ワールド）へ向ける（null で正面に戻す）。顔の前から見た左右・上下の角度を、瞳のずれに直す。
+   * 体の向きを基準にするので、体が傾いていても顔から見た向きになる。後ろの物は横の端まで寄せる
+   */
+  lookAt(p: THREE.Vector3 | null): void {
+    if (!p) {
+      this.face.gazeTarget = null;
+      return;
+    }
+    const head = faceFrame(this, 0, 0).pos;
+    const d = p.clone().sub(head);
+    const q = this.body.rotation;
+    // 顔の右（見る人から見て右）＝体のローカル +x、上＝ +y、前＝ +z
+    const x = d.dot(new THREE.Vector3(1, 0, 0).applyQuaternion(q));
+    const y = d.dot(new THREE.Vector3(0, 1, 0).applyQuaternion(q));
+    const z = d.dot(new THREE.Vector3(0, 0, 1).applyQuaternion(q));
+    const ax = Math.atan2(x, z);
+    const ay = Math.atan2(y, Math.hypot(x, z));
+    this.face.gazeTarget = [
+      THREE.MathUtils.clamp(ax / GAZE_FULL_X, -1, 1) * GAZE_MAX_X,
+      THREE.MathUtils.clamp(ay / GAZE_FULL_Y, -1, 1) * GAZE_MAX_Y,
+    ];
   }
 
   /** 点 point を方向 dir につつく（へこんで弾み、驚いた顔をする） */

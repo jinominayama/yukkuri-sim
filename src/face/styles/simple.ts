@@ -18,10 +18,11 @@ export class SimpleStyle extends AnimeStyle {
   protected override drawOpenEye(ctx: CanvasRenderingContext2D, s: 1 | -1, open: number, state: FaceState): void {
     const { eyeX, eyeY, eyeW: w, eyeH: h } = this.layout;
     const look = state.expression.eyes.look ?? [0, 0];
-    const x = s * eyeX + look[0] * w;
+    const gz = state.gaze ?? [0, 0];
+    const x = s * eyeX + look[0] * w + gz[0] * w;
     // まばたきは下端を残して縦に縮める
     const ry = h * open;
-    const y = eyeY - h + ry + look[1] * h;
+    const y = eyeY - h + ry + look[1] * h + gz[1] * h;
     ctx.beginPath();
     ctx.ellipse(x, y, w, ry, 0, 0, Math.PI * 2);
     ctx.fillStyle = '#0b0604';

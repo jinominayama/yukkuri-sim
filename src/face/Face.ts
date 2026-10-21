@@ -35,6 +35,9 @@ export const DEFAULT_FACE: FaceSettings = {
  * 顔の絵（パーツの組み合わせ × 絵柄）をキャンバスに描き、体に貼るテクスチャにする。
  * 描き直すのは、パーツ・絵柄・色・まばたきの段階が変わったときだけ。
  */
+/** 視線が見たい向きへ寄る速さ（1/s） */
+const GAZE_FOLLOW = 8;
+
 export class Face {
   readonly settings: FaceSettings = loadSettings();
   readonly texture: THREE.CanvasTexture;
@@ -49,6 +52,12 @@ export class Face {
    * 設定（settings）は書き換えないので、null に戻せばいつもの顔に戻る。上書きしたパーツは左右反転しない
    */
   override: Partial<PartSelection> | null = null;
+  /**
+   * 視線：見たい向き（見る人から見て右 +・上 +。目の半幅・半高に対する比。null で正面）。
+   * 今の視線はそこへなめらかに寄る（GAZE_FOLLOW）。開いた目の瞳だけを動かす
+   */
+  gazeTarget: [number, number] | null = null;
+  private gaze: [number, number] = [0, 0];
 
   constructor() {
     const w = FACE_RECT.xMax - FACE_RECT.xMin;
@@ -89,6 +98,10 @@ export class Face {
 
   /** 固定時間刻みで呼ぶ：まばたきを進める */
   update(dt: number): void {
+    const [tx, ty] = this.gazeTarget ?? [0, 0];
+    const k = Math.min(1, dt * GAZE_FOLLOW);
+    this.gaze[0] += (tx - this.gaze[0]) * k;
+    this.gaze[1] += (ty - this.gaze[1]) * k;
     if (this.blinkT >= 0) {
       this.blinkT += dt;
       if (this.blinkT > BLINK_TIME) this.blinkT = -1;
@@ -116,7 +129,9 @@ export class Face {
     if (s.blink && ex.blink && this.blinkT >= 0) {
       blink = Math.round(Math.sin((this.blinkT / BLINK_TIME) * Math.PI) * 4) / 4;
     }
-    const key = `${JSON.stringify(parts)}|${JSON.stringify(flip)}|${style.id}|${s.iris}|${blink}`;
+    // 視線は描き直しを減らすため 0.04 刻みに丸める
+    const gaze: [number, number] = [Math.round(this.gaze[0] * 25) / 25, Math.round(this.gaze[1] * 25) / 25];
+    const key = `${JSON.stringify(parts)}|${JSON.stringify(flip)}|${style.id}|${s.iris}|${blink}|${gaze}`;
     if (key === this.drawnKey) return;
     this.drawnKey = key;
 
@@ -126,7 +141,7 @@ export class Face {
     // 顔座標（単位：頭の半径、y が上）に合わせる
     const k = canvas.width / (FACE_RECT.xMax - FACE_RECT.xMin);
     ctx.setTransform(k, 0, 0, -k, -FACE_RECT.xMin * k, FACE_RECT.yMax * k);
-    style.draw(ctx, { expression: ex, look: s, blink });
+    style.draw(ctx, { expression: ex, look: s, blink, gaze });
     this.texture.needsUpdate = true;
   }
 
