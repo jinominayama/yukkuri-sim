@@ -206,6 +206,19 @@ export class Braid implements Accessory {
   private trimmed = -1;
   /** 点が帽子に隠れているか（帽子をかぶっているとき Outfit が設定する）。編み始めを帽子の外へ出すのに使う */
   cover: ((p: THREE.Vector3) => boolean) | null = null;
+  /**
+   * 物をつかむ所（毛先の房の中ほど）と、そこでの向き：down は三つ編みの垂れる向き、side は横、front は体の外向き。
+   * 三つ編みを簡易的な手として使う（枝を持つなど）。update のたびに書き換える。ready は一度でも置けたか
+   */
+  readonly grip = { pos: new THREE.Vector3(), down: new THREE.Vector3(0, -1, 0), side: new THREE.Vector3(1, 0, 0), front: new THREE.Vector3(0, 0, 1), ready: false };
+  /**
+   * 三つ編みを伸ばす：つかむ所（grip）を reachTarget（ワールド）へ、reachAmount（0〜1）の割合で寄せる。
+   * 編み始めは体に付けたまま、道筋を「編み始め → 元の毛先 → 目標」の曲線へなめらかに曲げる（物を拾うときなど）
+   */
+  readonly reachTarget = new THREE.Vector3();
+  reachAmount = 0;
+  /** 伸ばした先のつかむ所が目標からずれる分の補正（毎回少しずつ合わせる） */
+  private readonly reachFix = new THREE.Vector3();
 
   constructor(ctx: AttachContext, private readonly style: BraidStyle, private readonly params: OutfitParams) {
     const hair = createAccessoryMaterial(ctx.bodyMaterial, style.hair, { rim: 0.2 });
@@ -312,6 +325,19 @@ export class Braid implements Accessory {
         nrms[i].lerp(ln[i], this.laid).normalize();
       }
     }
+    // 伸ばす：道筋を、編み始め → 元の毛先 → 目標（補正つき）の 2 次曲線へ寄せる
+    if (this.reachAmount > 1e-3) {
+      const a = this.reachAmount;
+      const root = pts[0].clone();
+      const ctrl = pts[pts.length - 1].clone();
+      const end = this.reachTarget.clone().add(this.reachFix);
+      for (let i = 0; i < pts.length; i++) {
+        const t = i / (pts.length - 1);
+        const q = root.clone().multiplyScalar((1 - t) * (1 - t))
+          .addScaledVector(ctrl, 2 * (1 - t) * t).addScaledVector(end, t * t);
+        pts[i].lerp(q, a);
+      }
+    } else this.reachFix.set(0, 0, 0);
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
     const total = cum[cum.length - 1];
@@ -351,7 +377,8 @@ export class Braid implements Accessory {
     // 作り直した直後（帽子が載り終わる前など）は仮の数として、落ち着くまで毎回決め直す
     let count = this.count;
     const still = ctx.still !== false;
-    if (!this.counted || still) {
+    // 伸ばしている間も数を決め直す（数を保ったまま伸ばすと、編み目の間が空いてばらばらに見える）
+    if (!this.counted || still || this.reachAmount > 1e-3) {
       const raw = target / (seg * LOBE_STEP);
       if (!this.counted || Math.abs(raw - count) >= COUNT_KEEP) count = Math.min(MAX_LOBES, Math.max(2, Math.round(raw)));
       if (still) this.counted = true;
@@ -390,6 +417,19 @@ export class Braid implements Accessory {
     // （長さも間隔と同じくゆっくり追従させた長さから。呼吸で伸び縮みしないように）
     const tuftLen = THREE.MathUtils.clamp(braidEnd / st.bowAt - braidEnd, seg, seg * 1.8) * 1.05;
     place(this.tuft, braidEnd + w * 0.05, 0, new THREE.Vector3(w * 0.9, tuftLen, w * 0.9), 0);
+    // つかむ所：房の中ほど
+    {
+      const g = at(braidEnd + tuftLen * 0.5);
+      const down = g.tan.clone();
+      const lat = sideOf(g.nrm, down);
+      this.grip.pos.copy(g.pos);
+      this.grip.down.copy(down);
+      this.grip.side.copy(lat);
+      this.grip.front.crossVectors(down, lat).normalize();
+      this.grip.ready = true;
+      // 伸ばしているとき：つかむ所が目標からずれた分を、次から少しずつ補う（道筋の先と房の中ほどの差）
+      if (this.reachAmount > 1e-3) this.reachFix.addScaledVector(this.reachTarget.clone().sub(this.grip.pos), 0.3 * this.reachAmount);
+    }
   }
 
   dispose(): void {

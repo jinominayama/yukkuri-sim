@@ -218,6 +218,12 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(moruTune.add(y.moru.params, 'contactSoft', 0.01, 1, 0.01).name('這うときの接地面の硬さ(倍)').onChange(moruContact));
   noLock(moruTune.add(y.moru.params, 'press', 0, 20, 0.5).name('這うときの押し付け').onChange(moruContact));
 
+  // 枝：ボタンで地面に出し、三つ編みで持つ（今は持つだけ）
+  const branch = doGroup.addFolder('枝');
+  branch.add({ f: () => y.branch.spawn() }, 'f').name('枝を出す');
+  branch.add({ f: () => y.branch.toggleHold() }, 'f').name('持つ／離す');
+  branch.add({ f: () => y.branch.clear() }, 'f').name('片付ける');
+
   // ぷくー：体をふくらませて威嚇する（ボタンで始める。もう一度押すとしぼむ）
   const puku = doGroup.addFolder('ぷくー');
   puku.add({ f: () => y.puku.toggle() }, 'f').name('ぷくーする／やめる');

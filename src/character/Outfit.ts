@@ -238,6 +238,12 @@ export class Outfit {
     return best;
   }
 
+  /** 三つ編み（表示しているときだけ。物を持つのに使う） */
+  get braid(): Braid | null {
+    if (!this.params.showBraid) return null;
+    return this.accessories.find((a): a is Braid => a instanceof Braid) ?? null;
+  }
+
   /** 体の頂点 i の今の位置と法線（ワールド座標） */
   vertexPoint(i: number, pos: THREE.Vector3, nrm: THREE.Vector3): void {
     this.refreshArrays();
