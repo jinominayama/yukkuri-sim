@@ -15,7 +15,7 @@ export type LineKey =
   | 'fleeHop' | 'fleeCrawl'
   | 'vomitShock' | 'vomitAfter'
   | 'doze' | 'snore' | 'wake' | 'faint' | 'comeTo'
-  | 'branchGo' | 'branchLower' | 'branchPick' | 'branchDrop'
+  | 'branchGo' | 'branchLower' | 'branchPick' | 'branchDrop' | 'branchThreat'
   | 'forageGo' | 'forageLower' | 'forageOnHat' | 'forageFull' | 'forageBusy' | 'forageSpill';
 
 type Lines = Record<LineKey, string[]>;
@@ -55,6 +55,10 @@ const COMMON: Lines = {
     'さいきょうのえださんだよ！', 'ゆっくりしたえださんだね！', 'まりさのたからものにするよ！',
   ],
   branchDrop: ['ゆっ', 'ぽいっ', 'ゆ…おちちゃった', 'えださん…ばいばい', 'ゆゆっ！？えださんが…'],
+  branchThreat: [
+    'こっちにこないでね！', 'ゆっくりできないやつはこうだよ！', 'まりさはつよいんだよ！', 'ぷんぷん！',
+    'えださんでやっつけるよ！', 'どっかいってね！',
+  ],
   forageGo: ['ごはんさんみつけたよ！', 'ゆっ！ごはんさんだよ！', 'あつめるよ！', 'ゆっくりあつめるよ！'],
   forageLower: ['んしょ', 'よいしょ', 'ゆっ'],
   forageOnHat: ['ぽいっ♪', 'おぼうしにしまうよ！', 'ゆっくりためておくよ！', 'いっぱいあつめるよ！', 'ゆっへん！'],
@@ -96,6 +100,10 @@ const MARISA_NOZE: Partial<Lines> = {
     'まりさたんけんたいなのぜ！', 'これでまりさはむてきなのぜ！', 'ゆっくりしたえださんなのぜ！',
   ],
   branchDrop: ['ゆっ', 'ぽいっ', 'ゆ…おちたのぜ', 'えださん…ばいばいなのぜ', 'ゆゆっ！？まりさのえださんが…！'],
+  branchThreat: [
+    'こっちにくるななのぜ！', 'ゆっくりできないやつはこうなのぜ！', 'まりさはさいきょうなのぜ！', 'えださんのさびにしてやるのぜ！',
+    'かかってくるのぜ！', 'どっかいけなのぜ！',
+  ],
   forageGo: ['ごはんさんみつけたのぜ！', 'ゆっ！ごはんさんなのぜ！', 'あつめるのぜ！', 'まりさがぜんぶもらうのぜ！'],
   forageLower: ['んしょ', 'ゆっしょ', 'ゆっ'],
   forageOnHat: ['ぽいっ♪', 'おぼうしにしまうのぜ！', 'たくわえておくのぜ！', 'まりさのおぼうしはべんりなのぜ！', 'ゆっへん！'],

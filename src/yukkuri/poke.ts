@@ -187,6 +187,8 @@ export class Poke {
       const sound = SLAP_SOUNDS[Math.floor(Math.random() * SLAP_SOUNDS.length)];
       y.texts.say(sound, at.clone().add(new THREE.Vector3(0, R * 0.35, 0)), R * 0.32, 0.7, new THREE.Vector3(0, R * 0.5, 0));
     }
+    // 枝を持っていてつつかれたら、痛がる代わりに枝を振って威嚇し返す（叩かれたときは痛がる）
+    if (!slap && y.branch.counter()) return;
     // 顔（ほかの動きが顔を使っていなければ）
     if (this.busy()) return;
     if (slap) {

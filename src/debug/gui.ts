@@ -222,6 +222,9 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   const branch = doGroup.addFolder('枝');
   branch.add({ f: () => y.branch.spawn() }, 'f').name('枝を出す');
   branch.add({ f: () => y.branch.toggleHold() }, 'f').name('持つ／離す');
+  branch.add({ f: () => y.branch.toggleThreat() }, 'f').name('威嚇する／やめる');
+  // デバッグ用：威嚇でカメラの方を向かない（ほかの角度から振り方を見るため）
+  noLock(branch.add(y.branch, 'faceCamera').name('威嚇でカメラを向く'));
   branch.add({ f: () => y.branch.clear() }, 'f').name('片付ける');
 
   // 餌集め：小さな餌を 1 個ずつ出し、三つ編みで拾って帽子のつばに乗せる

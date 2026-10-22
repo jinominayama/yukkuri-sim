@@ -40,6 +40,8 @@ const MAX_LOBES = 40;
 const SPACING_FOLLOW = 0.005;
 const SPACING_SNAP = 0.03;
 const SPACING_MOVE = 0.4;
+/** 伸ばしているとき、編み目を縦に伸ばしてよい上限（倍） */
+const LOBE_STRETCH_MAX = 2.2;
 /** 編み目の数を変えるのは、ちょうどの数からこれ以上離れたとき（0.5 より大きくして境目でのばたつきを防ぐ） */
 const COUNT_KEEP = 0.8;
 /** 帽子の外へ出た所から編み始めまでの道筋の長さ（編み目1つの長さに対する比。一番上の編み目の上半分ほど） */
@@ -110,6 +112,24 @@ function sideOf(nrm: THREE.Vector3, down: THREE.Vector3): THREE.Vector3 {
   }
   return new THREE.Vector3().crossVectors(n, down).normalize();
 }
+
+/** 体の中心 c から単位ベクトル dir の向きの、体の表面までの距離（その向きに近い頂点のうち一番遠いもの。間引いて数える） */
+function surfaceDist(pos: Float32Array, c: THREE.Vector3, dir: THREE.Vector3): number {
+  let best = 0;
+  for (let i = 0; i < pos.length; i += 3 * 2) {
+    const x = pos[i] - c.x, y = pos[i + 1] - c.y, z = pos[i + 2] - c.z;
+    const l = Math.hypot(x, y, z);
+    if (l < 1e-6) continue;
+    if ((x * dir.x + y * dir.y + z * dir.z) / l > SURFACE_COS) best = Math.max(best, l);
+  }
+  return best;
+}
+/** 伸ばすときの残りのずれの補正：毎回積む割合・残す割合（漏らし）・大きさの上限（頭の半径に対する比） */
+const REACH_FIX_GAIN = 0.25;
+const REACH_FIX_LEAK = 0.85;
+const REACH_FIX_MAX = 0.4;
+/** 表面までの距離を測るとき、向きがこれ（cos）より近い頂点を数える */
+const SURFACE_COS = 0.96;
 
 /** 体の中心（頂点の平均。間引いて数える） */
 function bodyCenter(pos: Float32Array): THREE.Vector3 {
@@ -217,7 +237,15 @@ export class Braid implements Accessory {
    */
   readonly reachTarget = new THREE.Vector3();
   reachAmount = 0;
-  /** 伸ばした先のつかむ所が目標からずれる分の補正（毎回少しずつ合わせる） */
+  /**
+   * つかむ所（房の中ほど）が道筋の先からどれだけ手前にあるか（道筋に沿った長さ）。伸ばすときは、道筋の先を目標からこの分だけ
+   * 先へ延ばして、つかむ所がちょうど目標に来るようにする。前の回の値を使う（向きの補正を積み重ねると、動く目標に追いつけず膨らみ続けた）
+   */
+  private reachShort = 0;
+  /**
+   * それでも残るずれ（つかむ所 → 目標）の補正。少しずつ積むが、毎回少し減らし（漏らし）、大きさにも上限を付ける
+   * （漏らさずに積むと、振り回す目標を追いかけて膨らみ続け、振る角度がおかしくなった）
+   */
   private readonly reachFix = new THREE.Vector3();
 
   constructor(ctx: AttachContext, private readonly style: BraidStyle, private readonly params: OutfitParams) {
@@ -326,18 +354,33 @@ export class Braid implements Accessory {
       }
     }
     // 伸ばす：道筋を、編み始め → 元の毛先 → 目標（補正つき）の 2 次曲線へ寄せる
+    // 曲げた道筋は体の中へ入らないよう、体の中心から見たその向きの体の表面より lift だけ外へ押し出す
+    // （元の道筋と同じ距離では、横に広い・前後に長い・下ぶくれの体型で表面の内側に入った）
     if (this.reachAmount > 1e-3) {
       const a = this.reachAmount;
       const root = pts[0].clone();
       const ctrl = pts[pts.length - 1].clone();
-      const end = this.reachTarget.clone().add(this.reachFix);
+      const out = this.reachTarget.clone().sub(ctrl);
+      // 延ばす向きは水平寄りに（下向きに延ばすと地面の下へ潜った）
+      if (out.lengthSq() > 1e-8) out.normalize();
+      out.y = Math.max(out.y, 0);
+      const end = this.reachTarget.clone().addScaledVector(out, this.reachShort).add(this.reachFix);
+      const c = bodyCenter(ctx.pos);
       for (let i = 0; i < pts.length; i++) {
         const t = i / (pts.length - 1);
         const q = root.clone().multiplyScalar((1 - t) * (1 - t))
           .addScaledVector(ctrl, 2 * (1 - t) * t).addScaledVector(end, t * t);
         pts[i].lerp(q, a);
+        if (i === 0) continue;
+        const v = pts[i].clone().sub(c);
+        const d = v.length();
+        if (d < 1e-6) continue;
+        const need = surfaceDist(ctx.pos, c, v.multiplyScalar(1 / d)) + lift;
+        // 先（つかむ所）は目標に届かせる（地面すれすれの目標は、その向きの体の表面より内側に見えることがある）
+        const keep = 1 - THREE.MathUtils.smoothstep(t, 0.7, 1);
+        if (d < need) pts[i].copy(c).addScaledVector(v, d + (need - d) * keep);
       }
-    } else this.reachFix.set(0, 0, 0);
+    }
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
     const total = cum[cum.length - 1];
@@ -377,8 +420,10 @@ export class Braid implements Accessory {
     // 作り直した直後（帽子が載り終わる前など）は仮の数として、落ち着くまで毎回決め直す
     let count = this.count;
     const still = ctx.still !== false;
-    // 伸ばしている間も数を決め直す（数を保ったまま伸ばすと、編み目の間が空いてばらばらに見える）
-    if (!this.counted || still || this.reachAmount > 1e-3) {
+    // 伸ばしている間は数を変えない（道筋の長さが毎コマ大きく変わるので、決め直すと編み目が出たり消えたりしてちらついた）。
+    // 代わりに、間が空く分だけ編み目を縦に伸ばして埋める（下の stretch）
+    const reaching = this.reachAmount > 1e-3;
+    if (!reaching && (!this.counted || still)) {
       const raw = target / (seg * LOBE_STEP);
       if (!this.counted || Math.abs(raw - count) >= COUNT_KEEP) count = Math.min(MAX_LOBES, Math.max(2, Math.round(raw)));
       if (still) this.counted = true;
@@ -388,6 +433,8 @@ export class Braid implements Accessory {
     else this.spacing += (want - this.spacing) * (!still || Math.abs(want - this.spacing) > want * SPACING_SNAP ? SPACING_MOVE : SPACING_FOLLOW);
     this.count = count;
     const braidEnd = this.spacing * count;
+    // 伸ばしていて間隔が広がった分だけ、編み目を縦に伸ばす（間が空いてばらばらに見えないように）
+    const stretch = THREE.MathUtils.clamp(this.spacing / (seg * LOBE_STEP), 1, LOBE_STRETCH_MAX);
     this.lobes.forEach((g, i) => {
       g.visible = i < count;
       if (!g.visible) return;
@@ -395,7 +442,7 @@ export class Braid implements Accessory {
       // 下ほど少し細く。左右交互に、とがった先が中央の下を向くよう傾ける
       const taper = 1 - 0.25 * (i / count);
       const s = i % 2 === 0 ? 1 : -1;
-      place(g, d, s * w * 0.2 * taper, new THREE.Vector3(w * 1.05 * taper, seg * 1.45 * taper, w * taper), -s * LOBE_TILT);
+      place(g, d, s * w * 0.2 * taper, new THREE.Vector3(w * 1.05 * taper, seg * 1.45 * taper * stretch, w * taper), -s * LOBE_TILT);
       // 下の編み目ほど手前（上の編み目の先に重なる）
       g.translateZ(w * 0.04 * (i / count));
     });
@@ -427,8 +474,15 @@ export class Braid implements Accessory {
       this.grip.side.copy(lat);
       this.grip.front.crossVectors(down, lat).normalize();
       this.grip.ready = true;
-      // 伸ばしているとき：つかむ所が目標からずれた分を、次から少しずつ補う（道筋の先と房の中ほどの差）
-      if (this.reachAmount > 1e-3) this.reachFix.addScaledVector(this.reachTarget.clone().sub(this.grip.pos), 0.3 * this.reachAmount);
+      // つかむ所が道筋の先から手前にある長さ（次の回の延ばす分。なめらかに追う）
+      const short = Math.max(0, total - (braidEnd + tuftLen * 0.5));
+      // 前の回の長さをそのまま使う（なめらかに追わせると遅れ、追いつく瞬間に毛先がぐいっと動いた）
+      this.reachShort = short;
+      if (this.reachAmount > 1e-3) {
+        this.reachFix.multiplyScalar(REACH_FIX_LEAK).addScaledVector(this.reachTarget.clone().sub(this.grip.pos), REACH_FIX_GAIN * this.reachAmount);
+        const max = R * REACH_FIX_MAX;
+        if (this.reachFix.length() > max) this.reachFix.setLength(max);
+      } else this.reachFix.set(0, 0, 0);
     }
   }
 
