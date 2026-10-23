@@ -102,6 +102,15 @@ export function showFace(y: Yukkuri, face: Partial<PartSelection>, atLeast: Part
 }
 
 /** 一覧からどれか 1 つ（発言のパターンを選ぶ） */
+/** 体の表面が、体の中心から水平の向き dir（単位ベクトル）へどこまで出ているか（横に広い体型・前後に長い体型で胴の半径より大きい） */
+export function bodyExtent(y: Yukkuri, dir: THREE.Vector3): number {
+  const p = y.bodyMesh.geometry.getAttribute('position').array as Float32Array;
+  const cx = y.center.x, cz = y.center.z;
+  let far = 0;
+  for (let i = 0; i < p.length; i += 3) far = Math.max(far, (p[i] - cx) * dir.x + (p[i + 2] - cz) * dir.z);
+  return far;
+}
+
 export function pick<T>(list: readonly T[]): T {
   return list[Math.floor(Math.random() * list.length)];
 }

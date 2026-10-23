@@ -16,7 +16,8 @@ export type LineKey =
   | 'vomitShock' | 'vomitAfter'
   | 'doze' | 'snore' | 'wake' | 'faint' | 'comeTo'
   | 'branchGo' | 'branchLower' | 'branchPick' | 'branchDrop' | 'branchThreat'
-  | 'forageGo' | 'forageLower' | 'forageOnHat' | 'forageFull' | 'forageBusy' | 'forageSpill';
+  | 'forageGo' | 'forageLower' | 'forageOnHat' | 'forageFull' | 'forageBusy' | 'forageSpill'
+  | 'stashStart' | 'stashIn' | 'stashDone' | 'stashFull' | 'stashNone';
 
 type Lines = Record<LineKey, string[]>;
 
@@ -65,6 +66,11 @@ const COMMON: Lines = {
   forageFull: ['もうのらないよ…', 'おぼうしがいっぱいだよ！', 'ゆぅ…これいじょうはむりだよ…'],
   forageBusy: ['おさげがふさがってるよ…', 'えださんでいっぱいだよ！'],
   forageSpill: ['ゆあぁっ！？ごはんさんが！', 'ゆぅ…おちちゃった…', 'まりさのごはんさんがぁ！', 'ゆっくりあつめたのにぃ…'],
+  stashStart: ['おぼうしにしまうよ！', 'ゆっくりしまうよ！', 'おぼうしさん、ぬぐよ！'],
+  stashIn: ['ぽいっ♪', 'ないないするよ！', 'ゆっくりはいってね！', 'ぽいっ'],
+  stashDone: ['ゆっくりしまったよ！', 'これでたくわえはばっちりだよ！', 'ゆっへん！', 'おぼうしさん、ゆっくりおかえり！'],
+  stashFull: ['もうはいらないよ！', 'おぼうしのなかがいっぱいだよ！', 'ゆぅ…ぱんぱんだよ…'],
+  stashNone: ['しまうごはんさんがないよ？', 'つばにはなにものってないよ？'],
 };
 
 /** 魔理沙の「のぜ」口調（〜なのぜ・〜だぜ）。叫び・泣き声など口調の出ないものは共通と同じ */
@@ -110,6 +116,11 @@ const MARISA_NOZE: Partial<Lines> = {
   forageFull: ['もうのらないのぜ…', 'おぼうしがいっぱいなのぜ！', 'ゆぅ…これいじょうはむりなのぜ…'],
   forageBusy: ['おさげがふさがってるのぜ…', 'えださんでいっぱいなのぜ！'],
   forageSpill: ['ゆあぁっ！？ごはんさんが！', 'ゆぅ…おちたのぜ…', 'まりさのごはんさんがぁ！', 'せっかくあつめたのにぃ…なのぜ'],
+  stashStart: ['おぼうしにしまうのぜ！', 'たくわえるのぜ！', 'おぼうしさん、ちょっとぬぐのぜ！'],
+  stashIn: ['ぽいっ♪', 'ないないするのぜ！', 'ぽいっ', 'まりさのおぼうしにはいるのぜ！'],
+  stashDone: ['しまったのぜ！', 'これでふゆごもりもばっちりなのぜ！', 'ゆっへん！', 'まりさのおぼうしはべんりなのぜ！'],
+  stashFull: ['もうはいらないのぜ！', 'おぼうしのなかがいっぱいなのぜ！', 'ゆぅ…ぱんぱんなのぜ…'],
+  stashNone: ['しまうごはんさんがないのぜ？', 'つばにはなにものってないのぜ？'],
 };
 
 export interface VoiceDef {

@@ -39,6 +39,9 @@ const GIVE_UP = 15;
 const LOWER_TIME = 0.5;
 const TOUCH_TIME = 0.25;
 export const LIFT_TIME = 0.6;
+/** その場で拾う（stay）とき：物が三つ編みの側のこの角度（rad）だけ前に来る向きへ回る。かがむ・沿わせる・持ち上げるのはこの倍率の時間で */
+const STAY_AHEAD = 0.2;
+const STAY_PACE = 0.7;
 /** かがむとき、三つ編みの側へ傾ける角度（rad）と沈み込み（縦の倍率） */
 const LEAN = 0.26;
 const CROUCH = 0.92;
@@ -51,6 +54,8 @@ export class BraidPick {
   private readonly approachTarget = new THREE.Vector3();
   private heading = 0;
   private side = 1;
+  /** かがむ・沿わせる・持ち上げる時間の倍率 */
+  private pace = 1;
   private readonly pose = new THREE.Quaternion();
   private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
 
@@ -68,11 +73,14 @@ export class BraidPick {
 
   /** 持ち上げの進み（0〜1） */
   get liftK(): number {
-    return this.phase === 'lift' ? smooth(this.t / LIFT_TIME) : 0;
+    return this.phase === 'lift' ? smooth(this.t / (LIFT_TIME * this.pace)) : 0;
   }
 
-  /** 拾い始める。三つ編みがないとき・気絶中・ほかに拾っている途中は false */
-  start(hooks: PickHooks): boolean {
+  /**
+   * 拾い始める。三つ編みがないとき・気絶中・ほかに拾っている途中は false。
+   * stay：歩かずに、その場で物が三つ編みの側に来る向きへ回って拾う（近くにあると分かっている物。手早く）
+   */
+  start(hooks: PickHooks, stay = false): boolean {
     const y = this.y;
     if (this.active || !y.outfit.braid || y.rest.fainting) return false;
     y.rest.wake(true);
@@ -80,6 +88,13 @@ export class BraidPick {
     this.hooks = hooks;
     this.phase = 'approach';
     this.t = 0;
+    this.pace = stay ? STAY_PACE : 1;
+    if (stay && !y.locomotion.isLying) {
+      this.faceSideways(hooks.grabPoint());
+      y.locomotion.stop();
+      this.startTurn();
+      return true;
+    }
     this.goNear(hooks.grabPoint());
     if (Math.hypot(this.approachTarget.x - y.center.x, this.approachTarget.z - y.center.z) < y.shape.radius * NEAR_ENOUGH && !y.locomotion.isLying) {
       y.locomotion.stop();
@@ -129,11 +144,11 @@ export class BraidPick {
         break;
       }
       case 'lower': {
-        const k = smooth(this.t / LOWER_TIME);
+        const k = smooth(this.t / (LOWER_TIME * this.pace));
         this.setPose(k, k);
         braid.reachTarget.copy(hooks.grabPoint());
         braid.reachAmount = k;
-        if (this.t >= LOWER_TIME) {
+        if (this.t >= LOWER_TIME * this.pace) {
           this.phase = 'touch';
           this.t = 0;
         }
@@ -142,17 +157,17 @@ export class BraidPick {
       case 'touch':
         this.setPose(1, 1);
         braid.reachTarget.copy(hooks.grabPoint());
-        if (this.t >= TOUCH_TIME) {
+        if (this.t >= TOUCH_TIME * this.pace) {
           this.phase = 'lift';
           this.t = 0;
           hooks.onLift?.();
         }
         break;
       case 'lift': {
-        const k = smooth(this.t / LIFT_TIME);
+        const k = smooth(this.t / (LIFT_TIME * this.pace));
         this.setPose(1 - k, 1 - k);
         braid.reachAmount = 1 - k;
-        if (this.t >= LIFT_TIME) {
+        if (this.t >= LIFT_TIME * this.pace) {
           this.finish();
           hooks.onDone?.();
         }
@@ -189,6 +204,16 @@ export class BraidPick {
     this.y.locomotion.hold();
     this.phase = 'turn';
     this.t = 0;
+  }
+
+  /** その場で拾う向き：物が三つ編みの側の、少し前に来る向き */
+  private faceSideways(p: THREE.Vector3): void {
+    const y = this.y;
+    const f = bodyFacing(y);
+    this.side = braidSide(y).dot(new THREE.Vector3(f.z, 0, -f.x)) >= 0 ? 1 : -1;
+    // 体の右（side +1）の向きの角度は heading + π/2
+    const a = Math.atan2(p.x - y.center.x, p.z - y.center.z);
+    this.heading = a - this.side * (Math.PI / 2 - STAY_AHEAD);
   }
 
   /**

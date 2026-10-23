@@ -9,6 +9,7 @@ import { createFacePanel } from './facePanel';
 import { CHARACTERS } from '../character';
 import { MORU_WAG_MAX } from '../yukkuri/moru';
 import { voicesOf } from '../yukkuri/lines';
+import { STASH_MAX } from '../yukkuri/forage';
 import { allPresets, findPreset, isOverridden, resetPreset, saveLastPresetId, savePreset, USER_PRESET_ID } from '../yukkuri/presets';
 
 export interface ViewSettings {
@@ -232,11 +233,13 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(forage.add(y.forage, 'kindId', { ランダム: 'random', 木の実: 'acorn', 草: 'grass', 虫: 'bug' }).name('出す餌'));
   forage.add({ f: () => y.forage.spawn() }, 'f').name('餌を出す');
   forage.add({ f: () => y.forage.pickNearest() }, 'f').name('拾う（近いものから）');
-  forage.add({ f: () => y.forage.spill(false) }, 'f').name('帽子の餌を落とす');
+  forage.add({ f: () => y.forage.stashHat() }, 'f').name('帽子にしまう');
+  forage.add({ f: () => y.forage.toggleHatOff() }, 'f').name('帽子を外す／かぶる（デバッグ）');
+  forage.add({ f: () => y.forage.spill(false) }, 'f').name('帽子の餌を落とす（中身も）');
   forage.add({ f: () => y.forage.clear() }, 'f').name('片付ける');
   const forageView = { count: '' };
-  forage.add(forageView, 'count').name('帽子の上').disable().listen();
-  setInterval(() => (forageView.count = `${y.forage.onHat} / 8 個（地面 ${y.forage.onGround} 個）`), 200);
+  forage.add(forageView, 'count').name('帽子の餌').disable().listen();
+  setInterval(() => (forageView.count = `つば ${y.forage.onHat} / 8・中 ${y.forage.inHat} / ${STASH_MAX}（地面 ${y.forage.onGround}）`), 200);
 
   // ぷくー：体をふくらませて威嚇する（ボタンで始める。もう一度押すとしぼむ）
   const puku = doGroup.addFolder('ぷくー');

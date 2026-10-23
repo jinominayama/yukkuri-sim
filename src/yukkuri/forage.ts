@@ -3,8 +3,9 @@ import { createAccessoryMaterial } from '../render/accessoryMaterial';
 import { createAccessoryOutlineMaterial } from '../render/outlineMaterial';
 import { ellipsoid, withOutline } from '../character/shapes';
 import type { ToonColors } from '../render/toonMaterial';
-import { bodyFacing, type Word } from './fx';
-import { BraidPick, smooth } from './braidPick';
+import { bodyExtent, bodyFacing, type Word } from './fx';
+import { BraidPick, braidSide, smooth } from './braidPick';
+import { HatStash } from './hatStash';
 import { findFood, type FoodKind } from './foods';
 import type { Yukkuri } from './Yukkuri';
 
@@ -13,8 +14,11 @@ import type { Yukkuri } from './Yukkuri';
  * 帽子のつばの前へ「ぽいっ」と放ってひと固まりに積み上げる。
  *   落ちる：叩かれた・倒れた・寝転がった・帽子を隠したら、つばの上の餌は全部転がり落ちて地面に散らばる（また拾える）
  *   満杯（CAPACITY 個）なら拾わない。枝を持っている間は三つ編みがふさがっているので拾わない
+ * 帽子にしまう（ボタン）：帽子を三つ編みで脱いで地面に逆さに置き（ひっくり返すときつばの餌は転がり落ちる）、
+ *   落ちた餌を 1 個ずつ拾って中へ放り込み、かぶり直す（hatStash.ts）。中の餌は見えず、数（STASH_MAX 個まで）だけ覚える。
+ *   つばの餌と同じきっかけで、中の餌もこぼれる
  */
-type ItemState = 'ground' | 'picking' | 'lift' | 'toss' | 'hat' | 'falling';
+type ItemState = 'ground' | 'picking' | 'lift' | 'toss' | 'hat' | 'falling' | 'tossIn' | 'inHat';
 
 interface Item {
   kind: FoodKind;
@@ -28,6 +32,8 @@ interface Item {
   readonly from: THREE.Vector3;
   readonly vel: THREE.Vector3;
   readonly spin: THREE.Vector3;
+  /** 帽子にしまう途中（つばから落とした餌。拾って中へ入れる） */
+  stash: boolean;
 }
 
 /** 餌の大きさ（胴の半径に対する比。形は単位の大きさで作る） */
@@ -43,6 +49,8 @@ const PILE: [number, number, number][] = [
   [0, 0.12, 1.5],
 ];
 const CAPACITY = PILE.length;
+/** 帽子の中にしまえる数 */
+export const STASH_MAX = 16;
 /** 出す所：体の前へ（胴の半径に対する比。この間でばらつかせる）と、横へのばらつき */
 const SPAWN_AHEAD = [2.2, 3.2];
 const SPAWN_SIDE = 1.2;
@@ -55,6 +63,12 @@ const TOSS_ARC = 0.9;
 const GRAVITY = 10;
 const SPILL_OUT = 0.9;
 const SPILL_UP = 1.4;
+/** 帽子にしまう：つばの餌を落とす弧（体の前から三つ編みの側への角度 rad。体の中心からの距離は胴の半径に対する比）と、落ちるまでの時間（秒） */
+const DROP_FROM = -0.15;
+const DROP_TO = 0.8;
+const DROP_R = 1.45;
+const DROP_CLEAR = 0.4;
+const DROP_TIME = 0.55;
 /** 体がこれ（rad）より傾いたら落とす */
 const SPILL_TILT = 0.9;
 
@@ -71,6 +85,9 @@ export class Forage {
   kindId: 'random' | 'acorn' | 'grass' | 'bug' = 'random';
   private readonly items: Item[] = [];
   private readonly picker: BraidPick;
+  private readonly stash: HatStash;
+  /** 帽子を外すだけ（デバッグ用）：置いたまま、もう一度押されるまで待つ */
+  private hatOffOnly = false;
   private word: Word | null = null;
   private readonly mats: Record<string, THREE.Material> = {};
   private readonly outline: THREE.Material;
@@ -82,6 +99,7 @@ export class Forage {
 
   constructor(private readonly y: Yukkuri) {
     this.picker = new BraidPick(y);
+    this.stash = new HatStash(y);
     const mat = (name: string, c: ToonColors, doubleSide = false) => {
       this.mats[name] = createAccessoryMaterial(y.bodyMaterial, c, { rim: 0.25, doubleSide });
     };
@@ -98,6 +116,11 @@ export class Forage {
     return this.items.filter((i) => i.state === 'hat' || i.state === 'toss').length;
   }
 
+  /** 帽子の中にしまってある数 */
+  get inHat(): number {
+    return this.items.filter((i) => i.state === 'inHat' || i.state === 'tossIn').length;
+  }
+
   /** 地面にある数 */
   get onGround(): number {
     return this.items.filter((i) => i.state === 'ground').length;
@@ -105,7 +128,7 @@ export class Forage {
 
   /** 拾っている途中か（三つ編みと身ぶりを使っている） */
   get busy(): boolean {
-    return this.picker.active;
+    return this.picker.active || this.stash.active;
   }
 
   /** 餌を 1 個出す（ゆっくりの前の地面に。種類は kindId） */
@@ -124,7 +147,7 @@ export class Forage {
     this.object.add(object);
     const item: Item = {
       kind, object, state: 'ground', slot: -1, yaw: Math.random() * Math.PI * 2, t: 0,
-      from: new THREE.Vector3(), vel: new THREE.Vector3(), spin: new THREE.Vector3(),
+      from: new THREE.Vector3(), vel: new THREE.Vector3(), spin: new THREE.Vector3(), stash: false,
     };
     this.items.push(item);
     this.placeOnGround(item, p.x, p.z);
@@ -133,7 +156,7 @@ export class Forage {
   /** 一番近い地面の餌を拾いに行く */
   pickNearest(): boolean {
     const y = this.y;
-    if (this.picker.active) return false;
+    if (this.picker.active || this.stash.active) return false;
     if (y.branch.holding || y.branch.busy) {
       this.say(y.line('forageBusy'), 0.2, 1.6);
       return false;
@@ -172,14 +195,28 @@ export class Forage {
     return true;
   }
 
-  /** つばの上の餌を全部落とす（地面に散らばる） */
+  /**
+   * つばの上の餌と帽子の中の餌を全部落とす（地面に散らばる）。帽子にしまう途中なら、やめて帽子を頭へ戻す
+   * （地面に置いた帽子の中身はそのまま）
+   */
   spill(say = true): void {
+    if (this.stash.active) {
+      this.stash.cancel();
+      return;
+    }
     let n = 0;
     const y = this.y;
     const hat = y.outfit.hat;
     const up = hat ? hat.upVector(this._u).clone() : new THREE.Vector3(0, 1, 0);
+    // 中の餌は帽子の口（つばの根元）のあたりから出す
+    const mouth = hat ? new THREE.Vector3().setFromMatrixPosition(hat.object.matrix)
+      : new THREE.Vector3(y.center.x, y.center.y + y.height * 0.4, y.center.z);
     for (const it of this.items) {
-      if (it.state !== 'hat' && it.state !== 'toss') continue;
+      if (it.state === 'inHat') {
+        it.object.visible = true;
+        it.object.position.copy(mouth)
+          .add(new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).multiplyScalar(y.shape.radius * 0.6));
+      } else if (it.state !== 'hat' && it.state !== 'toss') continue;
       n++;
       // 帽子の中心から外へ・上へ飛ばす
       const out = it.object.position.clone().sub(y.center).setY(0);
@@ -196,6 +233,7 @@ export class Forage {
   /** 片付ける（拾う途中ならやめる） */
   clear(): void {
     this.picker.cancel();
+    this.stash.cancel();
     for (const it of this.items) this.object.remove(it.object);
     this.items.length = 0;
   }
@@ -203,9 +241,11 @@ export class Forage {
   /** 固定時間刻みで呼ぶ */
   update(dt: number): void {
     const y = this.y;
+    this.stash.update(dt);
     this.picker.update(dt);
-    // 倒れた・寝転がった・大きく傾いた・帽子を隠したら、つばの上の餌は落ちる
-    if (this.onHat > 0) {
+    if (this.stash.down && !this.picker.active && !this.hatOffOnly) this.fillNext();
+    // 倒れた・寝転がった・大きく傾いた・帽子を隠したら、つばの上と帽子の中の餌は落ちる（しまう途中は傾けるので見ない）
+    if ((this.onHat > 0 || this.inHat > 0) && !this.stash.active) {
       const tilt = new THREE.Vector3(0, 1, 0).applyQuaternion(y.body.rotation).angleTo(new THREE.Vector3(0, 1, 0));
       if (!y.outfit.hat || y.locomotion.isLying || y.locomotion.tilted || tilt > SPILL_TILT) this.spill();
     }
@@ -214,6 +254,10 @@ export class Forage {
       if (it.state === 'toss' && it.t >= TOSS_TIME) {
         it.state = 'hat';
         this.say(y.line('forageOnHat'), 0.2, 1.4);
+      }
+      if (it.state === 'tossIn' && it.t >= TOSS_TIME) {
+        it.state = 'inHat';
+        it.object.visible = false;
       }
       if (it.state === 'falling') {
         it.vel.y -= GRAVITY * dt;
@@ -231,7 +275,14 @@ export class Forage {
     const y = this.y;
     const hat = y.outfit.hat;
     for (const it of this.items) {
-      if (it.state === 'lift') {
+      if (it.state === 'tossIn') {
+        // 放物線：毛先から地面に置いた帽子の口へ
+        const to = this.stash.mouth(this._p);
+        const k = smooth(it.t / TOSS_TIME);
+        const p = it.from.clone().lerp(to, k);
+        p.y += Math.sin(Math.PI * Math.min(1, it.t / TOSS_TIME)) * y.shape.radius * TOSS_ARC;
+        it.object.position.copy(p);
+      } else if (it.state === 'lift') {
         const g = y.outfit.braid?.grip;
         if (g?.ready) it.object.position.copy(g.pos).addScaledVector(g.down, y.shape.radius * SIZE * 0.4);
       } else if ((it.state === 'hat' || it.state === 'toss') && hat) {
@@ -255,6 +306,125 @@ export class Forage {
         }
       }
     }
+  }
+
+  /**
+   * デバッグ用：帽子を脱いで地面に逆さに置くだけ（餌は入れない。つばの餌は転がり落ちて普通の地面の餌になる）。
+   * 置いてあるときに呼ぶと、かぶり直す
+   */
+  toggleHatOff(): boolean {
+    if (this.hatOffOnly && this.stash.down) {
+      this.stash.putBack();
+      return true;
+    }
+    const y = this.y;
+    if (this.picker.active || this.stash.active || y.branch.holding || y.branch.busy) return false;
+    const ok = this.stash.start({
+      onTip: () => {
+        this.dropPile();
+        for (const it of this.items) it.stash = false;
+      },
+      onDone: () => {
+        this.hatOffOnly = false;
+      },
+      onCancel: () => {
+        this.hatOffOnly = false;
+      },
+    });
+    this.hatOffOnly = ok;
+    return ok;
+  }
+
+  /** 帽子にしまう：帽子を脱いで地面に逆さに置き、つばの餌を中へ入れて、かぶり直す */
+  stashHat(): boolean {
+    const y = this.y;
+    if (this.picker.active || this.stash.active || !y.outfit.hat) return false;
+    if (y.branch.holding || y.branch.busy) {
+      this.say(y.line('forageBusy'), 0.2, 1.6);
+      return false;
+    }
+    if (this.onHat === 0) {
+      this.say(y.line('stashNone'), 0.2, 1.6);
+      return false;
+    }
+    if (this.inHat >= STASH_MAX) {
+      this.say(y.line('stashFull'), 0.2, 1.6);
+      return false;
+    }
+    const ok = this.stash.start({
+      onTip: () => this.dropPile(),
+      onDone: () => this.say(y.line('stashDone'), 0.2, 1.8),
+      onCancel: () => {
+        this.picker.cancel();
+        for (const it of this.items) it.stash = false;
+      },
+    });
+    if (ok) this.say(y.line('stashStart'), 0.2, 1.4);
+    return ok;
+  }
+
+  /**
+   * 帽子をひっくり返し始めた：つばの餌を前の地面へ転がり落とす（あとでその場で拾って中へ入れる）。
+   * 落ちる所は体の前から三つ編みの側（帽子を置く側）へ寄せた弧の上に並べる（歩かずに届き、置いた帽子にかからない所）
+   */
+  private dropPile(): void {
+    const y = this.y;
+    const R = y.shape.radius;
+    const f = bodyFacing(y);
+    const right = new THREE.Vector3(f.z, 0, -f.x);
+    const side = right.multiplyScalar(braidSide(y).dot(right) >= 0 ? 1 : -1);
+    const pile = this.items.filter((it) => it.state === 'hat' || it.state === 'toss');
+    pile.forEach((it, i) => {
+      it.state = 'falling';
+      it.slot = -1;
+      it.stash = true;
+      const a = DROP_FROM + (DROP_TO - DROP_FROM) * (pile.length > 1 ? i / (pile.length - 1) : 0.5);
+      const dir = f.clone().multiplyScalar(Math.cos(a)).addScaledVector(side, Math.sin(a));
+      // 横に広い体型では体の表面から DROP_CLEAR だけ外（体の下に入ると拾えない）
+      const r = Math.max(R * DROP_R, bodyExtent(y, dir) + R * DROP_CLEAR) + R * (Math.random() - 0.5) * 0.15;
+      const to = y.center.clone().addScaledVector(dir, r);
+      // その所へ DROP_TIME 秒で落ちる速さ
+      const p = it.object.position;
+      it.vel.set((to.x - p.x) / DROP_TIME, 0, (to.z - p.z) / DROP_TIME);
+      it.vel.y = (this.groundY(it) - p.y + 0.5 * GRAVITY * DROP_TIME * DROP_TIME) / DROP_TIME;
+      it.spin.set(Math.random() * 8 - 4, Math.random() * 8 - 4, Math.random() * 8 - 4);
+    });
+  }
+
+  /** 地面に置いた帽子へ、落とした餌を 1 個ずつ入れる（なくなるか、いっぱいになったら、かぶり直しに行く） */
+  private fillNext(): void {
+    const y = this.y;
+    if (this.items.some((i) => i.stash && i.state === 'falling')) return; // 落ちきるまで待つ
+    if (this.items.some((i) => i.state === 'tossIn')) return; // 入れ終わるまで待つ
+    const rest = this.items.filter((i) => i.stash && i.state === 'ground');
+    if (rest.length === 0 || this.inHat >= STASH_MAX) {
+      if (rest.length > 0) this.say(y.line('stashFull'), 0.2, 1.6);
+      for (const it of this.items) it.stash = false;
+      this.stash.putBack();
+      return;
+    }
+    let best = rest[0];
+    for (const it of rest) if (it.object.position.distanceTo(y.center) < best.object.position.distanceTo(y.center)) best = it;
+    const item = best;
+    const ok = this.picker.start({
+      grabPoint: () => item.object.position.clone(),
+      onLift: () => {
+        item.state = 'lift';
+      },
+      onDone: () => {
+        item.state = 'tossIn';
+        item.stash = false;
+        item.t = 0;
+        item.from.copy(item.object.position);
+        this.say(y.line('stashIn'), 0.18, 1.0);
+      },
+      onCancel: () => {
+        if (item.state === 'picking' || item.state === 'lift') this.dropToGround(item);
+        this.stash.cancel();
+      },
+    }, true);
+    if (ok) item.state = 'picking';
+    else this.stash.cancel();
   }
 
   /** 毛先から帽子のつばの空いている置き場へ放る */

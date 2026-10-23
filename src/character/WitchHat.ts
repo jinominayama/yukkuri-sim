@@ -71,6 +71,26 @@ export class WitchHat implements Accessory {
   tiltUsed = 0;
   private reseating = false;
   private local3 = new Float32Array(0);
+  /**
+   * 頭から外して動かすときの置き場（ワールドの行列。大きさを含む）。null なら頭にかぶる。
+   * 外している間は頭を避けて太らせるのをやめ、元の形に戻す（地面で折り曲げるのはそのまま）
+   */
+  carry: THREE.Matrix4 | null = null;
+  /** 頭にかぶっているときの置き場（外している間も毎回求める。carry を決めるのに使う） */
+  readonly worn = new THREE.Matrix4();
+  /** 外して元の形に戻してある */
+  private relaxed = false;
+  /**
+   * 円錐をつぶす割合（0〜1。外して逆さに置くとき）。つばより上（円錐の中）の高さを縮め、円錐の先までを低くする。
+   * つぶさずに置くと、帽子が円錐の先で地面に逆立ちして見えた（指示）
+   */
+  crush = 0;
+  /** 円錐の形に使ったつぶす割合 */
+  private crushUsed = 0;
+  /** 円錐と帯の輪郭線（外している間は隠す） */
+  private readonly crownLines: THREE.Object3D[] = [];
+  /** 裏地のおわん（外している間だけ出す） */
+  private dome: THREE.Mesh | null = null;
   /** local3 の各点の法線（帽子の座標） */
   private localN = new Float32Array(0);
 
@@ -88,7 +108,9 @@ export class WitchHat implements Accessory {
     // （同じ高さだと重なってちらつく）。帯は押しつぶされて面が裏返っても縞にならないよう両面
     const trim = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { doubleSide: true, ground: GROUND_CROWN });
     const crownCloth = createAccessoryMaterial(ctx.bodyMaterial, st.cloth, { rim: 0.35, doubleSide: true, ground: GROUND_CROWN });
-    this.materials.push(crownCloth);
+    // 白い裏地：つばの内側の縁の裏（円錐の口の内側に張り出した所）と、外したときに口をふさぐ浅いおわん（dome）
+    const brimLining = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { rim: 0.2, doubleSide: true, ground: GROUND_BRIM });
+    this.materials.push(crownCloth, brimLining);
     // 帯のリボン：帯と同じ高さで止める（ほかの飾りと同じ高さだと、逆さまに押しつぶされたとき、つばより上に出て突き抜けて見える）
     const trimBoth = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { doubleSide: true, ground: GROUND_CROWN });
     this.materials.push(clothBoth, trim, trimBoth);
@@ -108,7 +130,14 @@ export class WitchHat implements Accessory {
       [B * 0.985, -0.135], [B * 0.8, -0.03], [1.15, 0.0], [0.8, -0.01],
     ], 128, true);
     waveRim(brim, B * 0.75, 6, 0.035);
-    add(brim, clothBoth);
+    liningGroups(brim, BRIM_PROFILE, BRIM_LINING_FROM);
+    this.geometries.push(brim);
+    // 輪郭線は白い裏地の所には引かない（逆さに置いたとき、口の内側の縁の線がおわんの上に弧になって見えた）
+    const noLine = new THREE.MeshBasicMaterial({ visible: false });
+    this.materials.push(noLine);
+    const brimGroup = new THREE.Group();
+    brimGroup.add(new THREE.Mesh(brim, [ol, noLine]), new THREE.Mesh(brim, [clothBoth, brimLining]));
+    this.hat.add(brimGroup);
     this.brimBase = Float32Array.from(brim.getAttribute('position').array as Float32Array);
     this.brimGeometry = brim;
 
@@ -117,12 +146,28 @@ export class WitchHat implements Accessory {
     const tube = tubeAlong(curve, crownBase, 56, 56);
     // 内側も布の色で描く（寝転がって折れ曲がると、口の内側が見えることがある）
     add(tube, crownCloth);
+    this.crownLines.push(this.hat.children[this.hat.children.length - 1].children[0]);
     this.crownParts.push(new Swell(tube, 56, 57, (i) => i / 56, curve, 1));
+
+    // 裏地のおわん：フリルの内側に、円錐の中へ浅くふくらむ半球（逆さに置いたとき、口から見える内側を白くなめらかに。
+    // かぶっているときは頭が入るので出さない）
+    const dome = lathe(DOME_PROFILE, 96);
+    this.geometries.push(dome);
+    // 円錐との重なりでは必ずおわんが手前に描かれるよう、奥行きを少しだけ手前へずらす
+    const domeMat = createAccessoryMaterial(ctx.bodyMaterial, st.trim, { rim: 0.2, doubleSide: true, ground: GROUND_BRIM });
+    domeMat.polygonOffset = true;
+    domeMat.polygonOffsetFactor = -2;
+    domeMat.polygonOffsetUnits = -4;
+    this.materials.push(domeMat);
+    this.dome = new THREE.Mesh(dome, domeMat);
+    this.dome.visible = false;
+    this.hat.add(this.dome);
 
     // 帯（白）：円錐の根元
     const bandT = (i: number) => 0.02 + (i / 6) * 0.1;
     const band = tubeAlong((t) => curve(0.02 + t * 0.1), (t, a) => crownBase(0.02 + t * 0.1, a) * 1.035, 6, 56);
     add(band, trim);
+    this.crownLines.push(this.hat.children[this.hat.children.length - 1].children[0]);
     this.crownParts.push(new Swell(band, 6, 57, bandT, curve, 1.035));
 
     // 正面のリボン：帯の上、円錐の表面から外へ
@@ -306,6 +351,29 @@ export class WitchHat implements Accessory {
       a[v] = x - gx * k;
       a[v + 1] = y - gy * k;
       a[v + 2] = z - gz * k;
+    }
+  }
+
+  /**
+   * 円錐をつぶす：つばより上の高さを縮める（上ほど縮める。先は根元の CRUSH_HEIGHT 倍の高さまで下がる）。
+   * 縮めた分、少し横へふくらませる（布がたわんだように）
+   */
+  private squash(a: Float32Array): void {
+    const k = this.crush;
+    const s = 1 - k * (1 - CRUSH_HEIGHT);
+    for (let v = 0; v < a.length; v += 3) {
+      const y = a[v + 1];
+      if (y <= 0) continue;
+      const bulge = 1 + k * CRUSH_BULGE * Math.sin(Math.PI * Math.min(1, y / this.style.height));
+      a[v] *= bulge;
+      a[v + 2] *= bulge;
+      a[v + 1] = y * s;
+    }
+    // つぶした円錐が裏地のおわんより手前（口の側）に出ないよう、おわんの面から DOME_CLEAR 奥へ押し込む
+    // （出ると、円錐の内側とその輪郭線が口の真ん中に黒い穴のように見えた）
+    for (let v = 0; v < a.length; v += 3) {
+      const floor = domeHeight(Math.hypot(a[v], a[v + 2]));
+      if (floor !== null && a[v + 1] < floor + DOME_CLEAR) a[v + 1] = floor + DOME_CLEAR;
     }
   }
 
@@ -527,10 +595,15 @@ export class WitchHat implements Accessory {
    * rFrac（0〜1）の所の、つばの上面の点（ワールド）と、帽子の上向き（単位ベクトル）。物を帽子に乗せるのに使う
    */
   brimSpot(angle: number, rFrac: number, pos: THREE.Vector3, up: THREE.Vector3): void {
-    const r = CROWN_FOOT + (this.brimR - CROWN_FOOT) * rFrac;
-    pos.set(Math.sin(angle) * r, this.brimTop(r), Math.cos(angle) * r).applyMatrix4(this.object.matrix);
+    this.brimLocal(angle, rFrac, pos).applyMatrix4(this.object.matrix);
     const e = this.object.matrix.elements;
     up.set(e[4], e[5], e[6]).normalize();
+  }
+
+  /** brimSpot の点の、帽子の座標での位置 */
+  brimLocal(angle: number, rFrac: number, out: THREE.Vector3): THREE.Vector3 {
+    const r = CROWN_FOOT + (this.brimR - CROWN_FOOT) * rFrac;
+    return out.set(Math.sin(angle) * r, this.brimTop(r), Math.cos(angle) * r);
   }
 
   /** 帽子の向き：横（帽子の左が +）・上・前（単位ベクトル） */
@@ -581,13 +654,36 @@ export class WitchHat implements Accessory {
     // 持ち上げは数コマかけて追いつく。下ろすのは持ち上げたい量がもともとゆっくり減るのでそのまま
     this.lift = this.liftGoal > this.lift ? this.lift + (this.liftGoal - this.lift) * LIFT_RISE : this.liftGoal;
     const cur = frameOf(p[0], p[1], p[2], p[3]);
-    this.object.matrix.copy(cur).multiply(this.restInv).multiply(this.local)
+    this.worn.copy(cur).multiply(this.restInv).multiply(this.local)
       .multiply(new THREE.Matrix4().makeTranslation(0, this.lift, 0));
+    this.object.matrix.copy(this.carry ?? this.worn);
     this.object.matrixWorldNeedsUpdate = true;
     this.inverse.copy(this.object.matrix).invert();
+    if (this.dome) this.dome.visible = this.carry !== null;
+    // 外している間は円錐と帯の輪郭線を描かない（逆さに置くと、口の真ん中に輪郭線の色の穴が見える角度があった。
+    // 輪郭線は面の裏を描くので、口の側から見える円錐の内側に出る）
+    for (const line of this.crownLines) line.visible = this.carry === null;
+    if (this.carry && !this.relaxed) {
+      // 外した：頭に合わせて太らせた円錐・広げたフリルを元の形に戻す
+      this.relaxed = true;
+      this.crownPush.fill(0);
+      this.crownDirty = true;
+      this.frill?.fit(new Float32Array(0), 0);
+      this.lift = 0;
+      this.liftGoal = 0;
+    } else if (!this.carry && this.relaxed) {
+      // かぶり直した：次の avoidHead で必ず当て直す
+      this.relaxed = false;
+      this.crownPush.fill(-1);
+      this.frill?.invalidate();
+    }
     if (this.object.visible) {
-      this.avoidHead(ctx);
-      const fold = this.groundFold();
+      if (!this.carry) this.avoidHead(ctx);
+      // 外して逆さに置いたときは折らない（折った円錐の輪郭線がつばを突き抜けて見えた。地面より下は描くときに地面の高さで止まる）
+      const fold = this.carry ? null : this.groundFold();
+      if (!this.carry) this.crush = 0; // つぶすのは外している間だけ（かぶったら必ず元の形）
+      if (Math.abs(this.crush - this.crushUsed) > 1e-4) this.crownDirty = true;
+      const squash = this.crush > 0 ? (a: Float32Array) => this.squash(a) : undefined;
       // 円錐は当たっていないが、つばの縁が床に潜りそう（深くお辞儀したとき）
       const dip = fold ? 0 : this.brimDip();
       if (fold || dip > 0 || this.folded || this.crownDirty) {
@@ -602,13 +698,13 @@ export class WitchHat implements Accessory {
             // 円錐と帯もつばと一緒に垂らす（つばより地面の側で止める）。垂らしたつばを越えると、
             // 頭の側から円錐の布の縁が白っぽい線として見える
             this.drape(a, () => DRAPE_UNDER);
-          } : undefined);
+          } : squash);
         });
         // 折れているときは円錐の表面について行く。普段は元の形のまま、円錐が太った分だけ外へ
         const shift = this.bowDir.clone().multiplyScalar(this.pushAt(0.08) * 0.98);
         // 帯と同じく、つばの円錐の側に保ち、つばと一緒に垂らす（帽子が逆さまに押しつぶされたときも、つばを突き抜けない）
         for (const f of this.bowFollow) {
-          f.apply(fold !== null, shift, fold ? (a) => {
+          f.apply(fold !== null || this.crush > 0, shift, fold ? (a) => {
             this.keepAboveBrim(a, FOLD_LAYER);
             this.drape(a, () => DRAPE_UNDER);
           } : undefined);
@@ -628,6 +724,7 @@ export class WitchHat implements Accessory {
         // 垂らしたつばを元へ戻すため、次も作り直す（垂らす量が 0 になった回で元の形に戻る）
         this.folded = fold !== null || dip > 0;
         this.crownDirty = false;
+        this.crushUsed = this.crush;
       }
     }
   }
@@ -761,6 +858,23 @@ const DRAPE_FROM = 1.15;
 /** つばの断面の点の数（閉じた分を含む）と、上面の最後の点 */
 const BRIM_PROFILE = 10;
 const BRIM_TOP_LAST = 4;
+/** つばの断面で、この番号の点から先（下面の内側の縁 → 内側の端）を白い裏地にする */
+const BRIM_LINING_FROM = 7;
+/** 円錐をつぶしたときの高さ（元の高さに対する比）と、横へのふくらみ（半径に対する比） */
+const CRUSH_HEIGHT = 0.33;
+/** つぶした円錐を裏地のおわんから離しておく隙間（帽子の単位） */
+const DOME_CLEAR = 0.04;
+const CRUSH_BULGE = 0.12;
+/**
+ * 裏地のおわんの断面（[半径, 高さ]。帽子の単位。高さ + が円錐の中）：真ん中は円錐の中へ浅くふくらみ、縁は平らなつばにして
+ * 円錐の根元より下・外まで広げる。根元の輪は円錐の傾きに合わせて斜めで、つばの下面より下へ最大 0.1 はみ出している（半径 1.13〜1.18）。
+ * 半球のままだと、縁の近くでおわんが根元より奥に入り、根元の紺が細い筋になってのぞいた（フリルの付け根の段は、おわんの縁で隠す）。
+ * 真ん中は浅く（0.22）：逆さに置くと円錐をつぶすので（CRUSH_HEIGHT）、深い（0.4）とつぶした円錐の内側がおわんの真ん中のすぐ裏に来て、
+ * 遠くから見下ろすと円錐の輪郭線（裏の面を描く）がおわんを突き抜け、口の真ん中が黒い穴に見えた
+ */
+const DOME_PROFILE: [number, number][] = [
+  [0, 0.22], [0.35, 0.21], [0.65, 0.17], [0.88, 0.09], [1.0, 0.0], [1.05, -0.1], [1.24, -0.12],
+];
 /** 垂らしたつばを止める高さ：上面は地面から DRAPE_CLEAR、下面はさらに DRAPE_THICK 上（ワールド） */
 const DRAPE_CLEAR = 0.002;
 const DRAPE_THICK = 0.012;
@@ -816,6 +930,36 @@ function crownBase(t: number, a: number): number {
   return 1.15 * Math.pow(1 - t, 0.8) * (1 + CROWN_WAVE * Math.sin(a * 5 + t * 6)) + 0.005;
 }
 const CROWN_WAVE = 0.025;
+
+/**
+ * 回転体（lathe。断面 profile 個の点の列を回したもの）の三角形を並べ替えて、断面の点 from から先の帯を 2 つ目の材質にする
+ * （頂点は動かさないので、頂点の番号で形を変える処理はそのまま使える）
+ */
+function liningGroups(g: THREE.BufferGeometry, profile: number, from: number): void {
+  const index = g.getIndex()!;
+  const outer: number[] = [], inner: number[] = [];
+  for (let t = 0; t < index.count; t += 3) {
+    const a = index.getX(t), b = index.getX(t + 1), c = index.getX(t + 2);
+    const j = Math.min(a % profile, b % profile, c % profile);
+    (j >= from ? inner : outer).push(a, b, c);
+  }
+  g.setIndex([...outer, ...inner]);
+  g.clearGroups();
+  g.addGroup(0, outer.length, 0);
+  g.addGroup(outer.length, inner.length, 1);
+}
+/** 裏地のおわんの、中心から r の所の高さ（おわんの外なら null） */
+function domeHeight(r: number): number | null {
+  const pr = DOME_PROFILE;
+  for (let i = 1; i < pr.length; i++) {
+    if (r <= pr[i][0]) {
+      const [r0, y0] = pr[i - 1], [r1, y1] = pr[i];
+      return y0 + ((y1 - y0) * (r - r0)) / (r1 - r0);
+    }
+  }
+  return null;
+}
+
 /** 円錐の根元の半径（つばの置き場の内側。crownBase(0, a) とほぼ同じ） */
 const CROWN_FOOT = 1.15;
 /** つばの上面の高さ（つばの形の内側の高さ） */
