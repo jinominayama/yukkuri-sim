@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { bodyFacing } from './fx';
+import { bodyExtent, bodyFacing } from './fx';
 import type { Yukkuri } from './Yukkuri';
 
 /**
@@ -42,6 +42,8 @@ export const LIFT_TIME = 0.6;
 /** その場で拾う（stay）とき：物が三つ編みの側のこの角度（rad）だけ前に来る向きへ回る。かがむ・沿わせる・持ち上げるのはこの倍率の時間で */
 const STAY_AHEAD = 0.2;
 const STAY_PACE = 0.7;
+/** 物が体の表面からこの距離（胴の半径に対する比）より近ければ、歩かずにその場で拾う */
+const STAY_REACH = 0.9;
 /** かがむとき、三つ編みの側へ傾ける角度（rad）と沈み込み（縦の倍率） */
 const LEAN = 0.26;
 const CROUCH = 0.92;
@@ -88,6 +90,11 @@ export class BraidPick {
     this.hooks = hooks;
     this.phase = 'approach';
     this.t = 0;
+    // 三つ編みが届く近さなら歩かない（歩いて横付けしようとすると、行き先が体のすぐそばになって近くを回り続け、あきらめていた）
+    const p = hooks.grabPoint();
+    const dir = new THREE.Vector3(p.x - y.center.x, 0, p.z - y.center.z);
+    const d = dir.length();
+    if (!stay && d > 1e-6 && d < bodyExtent(y, dir.divideScalar(d)) + y.shape.radius * STAY_REACH) stay = true;
     this.pace = stay ? STAY_PACE : 1;
     if (stay && !y.locomotion.isLying) {
       this.faceSideways(hooks.grabPoint());

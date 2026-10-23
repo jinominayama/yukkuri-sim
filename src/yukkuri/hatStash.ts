@@ -37,7 +37,11 @@ const SNAP_TIME = 0.4;
 /** 下ろすとき三つ編みの側へ傾ける角度（rad） */
 const LEAN = 0.22;
 /** 戻る：あきらめるまでの時間（秒）と、向きを合わせる許し（rad）・最長時間（秒） */
-const BACK_GIVE_UP = 10;
+const BACK_GIVE_UP = 25;
+/** 戻る：脱いだ所からこの距離（胴の半径に対する比）まで来たら着いたことにする（向きは arrived で合わせ、ずれは「かぶる」の始めに吸収する） */
+const ARRIVE = 0.9;
+/** 戻ったとき、つかむ所が三つ編みの側のこの角度（rad）だけ前に来る向きへ回る */
+const BACK_AHEAD = 0.2;
 const TURN_OK = 0.12;
 const TURN_MAX = 2.5;
 /** つばの餌を落とし始める所（ひっくり返す進みの割合） */
@@ -91,6 +95,11 @@ export class HatStash {
     return this.phase === 'down';
   }
 
+  /** 地面に置いた帽子の置き場（行列） */
+  get placed(): THREE.Matrix4 {
+    return this.ground;
+  }
+
   /** 地面に置いた帽子の口（ワールド。物を放り込む所） */
   mouth(out: THREE.Vector3): THREE.Vector3 {
     return out.set(0, 0.25, 0).applyMatrix4(this.ground);
@@ -128,12 +137,27 @@ export class HatStash {
     this.go('back');
     y.locomotion.release();
     y.locomotion.moveTo(this.spot.x, this.spot.z);
-    // 行き先がほとんど今の所なら歩かない
-    if (Math.hypot(this.spot.x - y.center.x, this.spot.z - y.center.z) < y.shape.radius * 0.15) {
+    // 行き先がもうそばなら歩かない
+    if (Math.hypot(this.spot.x - y.center.x, this.spot.z - y.center.z) < y.shape.radius * ARRIVE) {
       y.locomotion.stop();
-      y.locomotion.hold();
-      this.go('turn');
+      this.arrived();
     }
+  }
+
+  /**
+   * 脱いだ所のそばへ戻った：その場で、置いた帽子のつかむ所が三つ編みの側（少し前）に来る向きへ回る。
+   * 脱いだ所ぴったりには戻れないので（跳ねて向きを変えながら近づくと、行き先の周りを回り続けることがある）、向きで合わせる。
+   * かぶるときに回す軸（体の前の向き）も、その向きに合わせ直す
+   */
+  private arrived(): void {
+    const y = this.y;
+    y.locomotion.hold();
+    const g = this.grabLocal.clone().applyMatrix4(this.ground);
+    const a = Math.atan2(g.x - y.center.x, g.z - y.center.z);
+    this.heading = a - this.sideSign * (Math.PI / 2 - BACK_AHEAD);
+    this.front.set(Math.sin(this.heading), 0, Math.cos(this.heading));
+    this.side.set(this.front.z, 0, -this.front.x).multiplyScalar(this.sideSign);
+    this.go('turn');
   }
 
   /** やめる（帽子は頭へ戻る） */
@@ -232,10 +256,9 @@ export class HatStash {
           this.cancel();
           break;
         }
-        if (!loco.hasTarget && loco.idle && !loco.tilted) {
-          loco.hold();
-          this.go('turn');
-        }
+        // 脱いだ所のそばまで来たら着いたことにする（ぴったりを狙うと、その周りを回り続けることがある）
+        if (loco.hasTarget && Math.hypot(this.spot.x - y.center.x, this.spot.z - y.center.z) < y.shape.radius * ARRIVE) loco.stop();
+        if (!loco.hasTarget && loco.idle && !loco.tilted) this.arrived();
         break;
       }
       case 'turn': {
