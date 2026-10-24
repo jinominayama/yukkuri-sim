@@ -12,7 +12,8 @@ import type { Yukkuri } from './Yukkuri';
  *                     宣言する／しないは切り替えられる（declareFirst。保存する）。宣言の間はその場で止まって待つ
  *   挨拶 … 「ゆっくりしていってね！」などをボタンで言う（セリフだけ）。「ここを{種族名}のゆっくりぷれいすにするよ！」の種族名は
  *          キャラクターの呼び名（CharacterDef.kana。なければ「ゆっくり」）
- *   おうちせんげん（proud）… 言いながらその場で軽く一度跳ね、着地したら少し体を反らして胸を張り、正面の上を見上げる（にっこり）
+ *   おうちせんげん（proud）… 言いながらその場で軽く一度跳ね、着地したら少し体を反らして胸を張り、正面の上を見上げる（にっこり）。
+ *                             せんげんした場所をおうち（Yukkuri.home）にする
  */
 const STORAGE_KEY = 'greet';
 /** 宣言してから動作を始めるまで（秒） */
@@ -82,6 +83,8 @@ export class Greet {
     y.locomotion.stop();
     y.locomotion.hold();
     this.say('greetPlace');
+    // せんげんした場所をおうちにする（巣作りなどの起点。前のおうちは置き換わる）
+    y.home.set(y.center.x, y.center.z, y.body.yaw);
     y.impulse(0, PROUD_HOP, 0);
     this.proud = { phase: 'hop', t: 0, heading: y.body.yaw, face: null, y0: y.center.y, top: y.center.y };
     return true;

@@ -26,6 +26,7 @@ import { PushBox } from './box';
 import { Greet } from './greet';
 import { Death } from './death';
 import { Otabe } from './otabe';
+import { Home } from './home';
 import { Voice, type LineKey } from './lines';
 import { faceFrame, TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
@@ -119,6 +120,8 @@ export class Yukkuri {
   readonly death: Death;
   /** おたべなさい（「おたべなさい！」の後、二つに割れる）。割れた後は体の物理と装飾の更新を止める */
   readonly otabe: Otabe;
+  /** おうち（おうちせんげんをした場所。巣作りなどの起点。画面には出さない） */
+  readonly home = new Home();
   /** セリフの口調（キャラクターごとに選ぶ。保存する） */
   readonly voice: Voice;
   /** 見ている人（カメラ）の位置。ぷくーでその方を向く。main が渡す */
