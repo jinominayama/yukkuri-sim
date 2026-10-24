@@ -52,8 +52,9 @@ const vertexShader = /* glsl */ `
   varying vec3 vNormalW;
   varying vec3 vPosW;
   void main() {
-    vec3 p = position + normal * uOffset;
-    vec3 n = normal;
+    // 物体の置き場（modelMatrix）も掛ける。掛けないと、体ごと見た目だけずらす震え（Yukkuri.tremble）で体だけ揺れて髪が止まって見えた
+    vec3 n = normalize(mat3(modelMatrix) * normal);
+    vec3 p = (modelMatrix * vec4(position, 1.0)).xyz + n * uOffset;
     // 地面に押し付けられた所は平らにつぶれる（寝転がったとき）
     if (clampToGround(p)) n = vec3(0.0, 1.0, 0.0);
     vPosW = p;
