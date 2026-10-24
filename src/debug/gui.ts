@@ -168,12 +168,15 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   // あいさつ：動作の前の宣言（切り替え）と、挨拶のボタン
   const greet = living.addFolder('あいさつ');
   noLock(greet.add(y.greet, 'declareFirst').name('動作の前に宣言する').onChange(() => y.greet.save()));
+  noLock(greet.add(y.greet, 'textSize', 0.5, 3, 0.05).name('文字の大きさ(倍)').onChange(() => y.greet.save()));
+  noLock(greet.add(y.greet, 'bigSize', 1, 6, 0.1).name('ゆっくりしていってね！の大きさ(倍)').onChange(() => y.greet.save()));
   greet.add({ f: () => y.greet.say('greetYukkuri') }, 'f').name('ゆっくりしていってね！');
   // おたべなさい：言ってから、帽子を脱いで横に置き、二つに割れる（戻すのはページの読み直し）
   greet.add({ f: () => { if (!y.otabe.active && !y.death.active && !y.rest.fainting) { y.greet.say('greetEatMe'); y.otabe.start(); } } }, 'f').name('おたべなさい！');
   // 死ぬ：言ってから、震えながら柔らかく黒ずんで止まる（戻すのはページの読み直し）
   greet.add({ f: () => { if (!y.death.active && !y.rest.fainting) { y.greet.say('greetLast'); y.death.start(); } } }, 'f').name('もっとゆっくりしたかったよ…');
-  greet.add({ f: () => y.greet.say('greetPlace') }, 'f').name('ここを○○のゆっくりぷれいすにするよ！');
+  // おうちせんげん：「ここを○○のゆっくりぷれいすにするよ！」と言う（ボタンの名前だけ短く）
+  greet.add({ f: () => y.greet.say('greetPlace') }, 'f').name('おうちせんげん');
   /** 宣言してから始める動作（食べる・うんうん・たいそう・眠る）を、今始められるか（ほかの動作の途中・気絶中は始めない。眠っていれば宣言で起こす） */
   const canAct = () => !(y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.rest.fainting);
 
