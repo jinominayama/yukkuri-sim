@@ -159,23 +159,35 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   pose.add({ f: () => y.getUp() }, 'f').name('起き上がる');
 
   // 眠る（立ったまま柔らかくなって眠る。つつく等で起きる）・気絶（どの姿勢でもその場で柔らかくなり、しばらくすると気がつく）
+  // あいさつ：動作の前の宣言（切り替え）と、挨拶のボタン
+  const greet = doGroup.addFolder('あいさつ');
+  noLock(greet.add(y.greet, 'declareFirst').name('動作の前に宣言する').onChange(() => y.greet.save()));
+  greet.add({ f: () => y.greet.say('greetYukkuri') }, 'f').name('ゆっくりしていってね！');
+  greet.add({ f: () => y.greet.say('greetEatMe') }, 'f').name('おたべなさい！');
+  greet.add({ f: () => y.greet.say('greetLast') }, 'f').name('もっとゆっくりしたかったよ…');
+  greet.add({ f: () => y.greet.say('greetPlace') }, 'f').name('ここを○○のゆっくりぷれいすにするよ！');
+  /** 宣言してから始める動作（食べる・うんうん・たいそう・眠る）を、今始められるか（ほかの動作の途中・気絶中は始めない。眠っていれば宣言で起こす） */
+  const canAct = () => !(y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.rest.fainting);
+
   const rest = doGroup.addFolder('眠る・気絶');
-  rest.add({ f: () => y.rest.toggleSleep() }, 'f').name('眠る／起こす');
+  // 眠るときは宣言してから（起こすときは宣言しない）
+  rest.add({ f: () => (y.rest.sleeping ? y.rest.toggleSleep() : y.greet.declare('declareSleep', canAct, () => y.rest.sleep())) }, 'f').name('眠る／起こす');
   rest.add({ f: () => y.rest.faint() }, 'f').name('気絶させる');
 
   // ごはん：食べ物を目の前に置くと、見つめる → むーしゃむーしゃ → しあわせー の順に食べる
   const meal = doGroup.addFolder('ごはん');
-  meal.add({ f: () => y.feeding.start() }, 'f').name('食べ物をあげる');
+  meal.add({ f: () => y.greet.declare('declareMeal', canAct, () => y.feeding.start()) }, 'f').name('食べ物をあげる');
 
   // うんうん：体の後ろから餡子を絞り出す。出したものは「片付ける」まで残る
   const poo = doGroup.addFolder('うんうん');
-  poo.add({ f: () => y.dropping.start() }, 'f').name('うんうんする');
+  poo.add({ f: () => y.greet.declare('declarePoo', canAct, () => y.dropping.start()) }, 'f').name('うんうんする');
   // うんうんたいそう：歌に合わせて揺れる・伸びる・ひねる・反ってから、うんうんを出す。
   // 最後に出すときの体勢（デバッグ用）：ランダム・仰向け（後ろへ反る）・腹ばい（お尻を突き上げる）
   const exerciseOpts = { pose: 'random' };
   noLock(poo.add(exerciseOpts, 'pose', { ランダム: 'random', 仰向け: 'supine', 腹ばい: 'prone' }).name('たいそうの体勢'));
   poo.add({
-    f: () => y.exercise.start(exerciseOpts.pose === 'random' ? undefined : exerciseOpts.pose === 'prone'),
+    f: () => y.greet.declare('declareExercise', canAct,
+      () => y.exercise.start(exerciseOpts.pose === 'random' ? undefined : exerciseOpts.pose === 'prone')),
   }, 'f').name('うんうんたいそう');
   poo.add({ f: () => y.dropping.clear() }, 'f').name('片付ける');
 

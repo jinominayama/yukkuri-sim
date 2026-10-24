@@ -18,7 +18,9 @@ export type LineKey =
   | 'branchGo' | 'branchLower' | 'branchPick' | 'branchDrop' | 'branchThreat'
   | 'forageGo' | 'forageLower' | 'forageOnHat' | 'forageFull' | 'forageBusy' | 'forageSpill'
   | 'stashStart' | 'stashIn' | 'stashDone' | 'stashFull' | 'stashNone'
-  | 'boxGo' | 'boxPush' | 'boxDone' | 'boxBump';
+  | 'boxGo' | 'boxPush' | 'boxDone' | 'boxBump'
+  | 'declarePoo' | 'declareExercise' | 'declareMeal' | 'declareSleep'
+  | 'greetYukkuri' | 'greetEatMe' | 'greetLast' | 'greetPlace';
 
 type Lines = Record<LineKey, string[]>;
 
@@ -76,6 +78,14 @@ const COMMON: Lines = {
   boxPush: ['ゆっ…ゆっ…', 'うんしょ…うんしょ…', 'ゆぎぎ…', 'おもいよ…', 'ゆ～ん…しょっ…', 'がんばるよ…！'],
   boxDone: ['ふぅ…ゆっくりうごいたよ！', 'ゆっへん！', 'やったよ！', 'ゆぅ…つかれたよ…'],
   boxBump: ['ゆっ！？はこさんがあるよ…', 'とおれないよ…', 'ゆぅ…じゃまだよ…'],
+  declarePoo: ['うんうんするよ！'],
+  declareExercise: ['うんうんたいそうはじまるよ！'],
+  declareMeal: ['すーぱーむしゃむしゃたいむはじまるよ！'],
+  declareSleep: ['すーやすーやするよ！'],
+  greetYukkuri: ['ゆっくりしていってね！'],
+  greetEatMe: ['おたべなさい！'],
+  greetLast: ['もっとゆっくりしたかったよ…'],
+  greetPlace: ['ここを{species}のゆっくりぷれいすにするよ！'],
 };
 
 /** 魔理沙の「のぜ」口調（〜なのぜ・〜だぜ）。叫び・泣き声など口調の出ないものは共通と同じ */
@@ -130,6 +140,12 @@ const MARISA_NOZE: Partial<Lines> = {
   boxPush: ['ゆっ…ゆっ…', 'うんしょ…なのぜ…', 'ゆぎぎ…', 'おもいのぜ…', 'まりさはまけないのぜ…！', 'もうちょっとなのぜ…'],
   boxDone: ['ふぅ…うごいたのぜ！', 'ゆっへん！', 'まりさのちからをみたか、なのぜ！', 'ゆぅ…つかれたのぜ…'],
   boxBump: ['ゆっ！？はこさんがじゃまなのぜ…', 'とおれないのぜ…', 'ゆぅ…どくのぜ…'],
+  declarePoo: ['うんうんするのぜ！'],
+  declareExercise: ['うんうんたいそうはじまるのぜ！'],
+  declareMeal: ['すーぱーむしゃむしゃたいむはじまるのぜ！'],
+  declareSleep: ['すーやすーやするのぜ！'],
+  greetLast: ['もっとゆっくりしたかったのぜ…'],
+  greetPlace: ['ここを{species}のゆっくりぷれいすにするのぜ！'],
 };
 
 export interface VoiceDef {

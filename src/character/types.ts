@@ -75,6 +75,8 @@ export interface CharacterDef {
   id: string;
   /** 一覧に出す名前 */
   name: string;
+  /** セリフで使う種族の呼び名（ひらがな。「ここをまりさのゆっくりぷれいすにするよ！」など） */
+  kana?: string;
   /** 瞳の色（選んだときに顔に反映する） */
   iris?: string;
   /** 髪型のパーツ（選べるもの）。なければ髪型は選べない */

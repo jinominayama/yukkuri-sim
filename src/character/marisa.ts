@@ -189,6 +189,7 @@ const marisaHair: HairStyle = {
 export const MARISA: CharacterDef = {
   id: 'marisa',
   name: '魔理沙',
+  kana: 'まりさ',
   iris: '#c9952a',
   hairParts: [
     { part: 'bangs', label: '前髪', options: BANG_OPTIONS },
