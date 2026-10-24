@@ -148,6 +148,8 @@ export class Branch {
     const facing = bodyFacing(y);
     const side = braidSide(y);
     const p = y.center.clone().addScaledVector(facing, R * SPAWN_AHEAD).addScaledVector(side, R * SPAWN_SIDE);
+    // ケースの壁の外へは出さない
+    y.stage?.limit(p, R * 0.6);
     this.picker.cancel();
     this.setScale();
     this.object.position.set(p.x, this.restY(), p.z);

@@ -10,8 +10,9 @@ import type { Yukkuri } from './Yukkuri';
  *   つかむ → かぶる（脱ぐのを逆に）→ 放す
  * 帽子は WitchHat.carry で動かす。三つ編みは Braid.reachTarget でつかんだ所に付ける。つかんでいる間はつかむ所を見る。
  * 途中でやめたときは、帽子は三つ編みを使わずに頭へ戻る（snap）
+ * 置く所が皿やケースの壁にかかるときは、先に広い所へ少し歩いてから脱ぐ（clear。3 回移ってもだめならやめる）
  */
-type Phase = 'idle' | 'grab' | 'off' | 'letGo' | 'down' | 'back' | 'turn' | 'regrab' | 'on' | 'letGo2' | 'snap';
+type Phase = 'idle' | 'clear' | 'grab' | 'off' | 'letGo' | 'down' | 'back' | 'turn' | 'regrab' | 'on' | 'letGo2' | 'snap';
 
 /** つかむ所：三つ編みの側のつばの、円錐の根元から縁までのこの割合の所 */
 const GRAB_R = 0.85;
@@ -50,6 +51,10 @@ const TURN_OK = 0.12;
 const TURN_MAX = 2.5;
 /** つばの餌を落とし始める所（ひっくり返す進みの割合） */
 const TIP_AT = 0.22;
+/** 置く所が皿・壁にかかるとき：広い所へ歩く距離（胴の半径に対する比）・移り直す回数・あきらめるまでの時間（秒） */
+const CLEAR_STEP = 2.2;
+const CLEAR_TRIES = 3;
+const CLEAR_GIVE_UP = 12;
 
 export interface StashHooks {
   /** ひっくり返し始めた（つばの上の物を落とす） */
@@ -77,7 +82,15 @@ export class HatStash {
   private readonly grabLocal = new THREE.Vector3();
   /** 置いたときにつかむ所（ワールド）と、回す向き（+1/-1） */
   private readonly putGrab = new THREE.Vector3();
+  /** 置いたときの帽子の中心（地面の上）と、つばの半径（m） */
+  private readonly putCenter = new THREE.Vector3();
+  private putRim = 0;
   private turnSign = 1;
+  /** 広い所へ移った回数と、その行き先 */
+  private clearTries = 0;
+  private readonly clearTo = new THREE.Vector3();
+  /** 戻る行き先（脱いだ所。ケースの壁ぎわでは行ける範囲の内側へ寄った所） */
+  private readonly backTo = new THREE.Vector3();
   /** かぶる向きのまま置く（逆さにしない） */
   private upright = false;
   /** 地面に置いた帽子の置き場（行列） */
@@ -123,9 +136,35 @@ export class HatStash {
     this.hooks = hooks;
     this.tipped = false;
     this.upright = upright;
-    hat.lined = !upright;
     y.locomotion.stop();
     y.locomotion.hold();
+    this.clearTries = 0;
+    this.begin();
+    return true;
+  }
+
+  /** 今いる所・向きで置く所を決めて、脱ぎ始める。置く所が皿・壁にかかるなら、先に広い所へ歩く */
+  private begin(): void {
+    const y = this.y;
+    const hat = y.outfit.hat!;
+    this.aim();
+    if (!this.putClear()) {
+      if (this.clearTries >= CLEAR_TRIES) {
+        this.cancel();
+        return;
+      }
+      this.clearTries++;
+      this.walkClear();
+      return;
+    }
+    hat.lined = !this.upright;
+    this.go('grab');
+  }
+
+  /** 置く所を決める（今いる所・向きから） */
+  private aim(): void {
+    const y = this.y;
+    const hat = y.outfit.hat!;
     this.front.copy(bodyFacing(y));
     const right = new THREE.Vector3(this.front.z, 0, -this.front.x);
     this.sideSign = braidSide(y).dot(right) >= 0 ? 1 : -1;
@@ -137,8 +176,34 @@ export class HatStash {
     const d = this.side.clone().transformDirection(hat.worn.clone().invert());
     hat.brimLocal(Math.atan2(d.x, d.z), GRAB_R, this.grabLocal);
     this.planPut();
-    this.go('grab');
-    return true;
+  }
+
+  /** 置く所が空いているか：置いた帽子のつばがケースの壁の内側に収まり、皿などに重ならない */
+  private putClear(): boolean {
+    const stage = this.y.stage;
+    if (!stage) return true;
+    const c = this.putCenter, r = this.putRim;
+    return stage.inside(c.x, c.z, r) && !stage.overlapProp(c.x, c.z, r);
+  }
+
+  /** 広い所へ歩く：置く所と反対の向き（壁・皿から離れる向き）へ、ケースの真ん中へ少し寄せて */
+  private walkClear(): void {
+    const y = this.y;
+    const R = y.shape.radius;
+    const away = new THREE.Vector3(y.center.x - this.putCenter.x, 0, y.center.z - this.putCenter.z);
+    if (away.lengthSq() < 1e-8) away.copy(this.side).negate();
+    away.normalize();
+    const a = y.stage?.area;
+    if (a) {
+      const mid = new THREE.Vector3((a.minX + a.maxX) / 2 - y.center.x, 0, (a.minZ + a.maxZ) / 2 - y.center.z);
+      if (mid.lengthSq() > 1e-8) away.addScaledVector(mid.normalize(), 0.5).normalize();
+    }
+    this.clearTo.set(y.center.x, 0, y.center.z).addScaledVector(away, R * CLEAR_STEP);
+    y.stage?.limit(this.clearTo, y.stageMargin);
+    y.locomotion.release();
+    y.locomotion.moveTo(this.clearTo.x, this.clearTo.z);
+    this.clearTo.copy(y.locomotion.target);
+    this.go('clear');
   }
 
   /** 中へ入れ終えた：脱いだ所へ戻ってかぶり直す */
@@ -148,8 +213,9 @@ export class HatStash {
     this.go('back');
     y.locomotion.release();
     y.locomotion.moveTo(this.spot.x, this.spot.z);
+    this.backTo.copy(y.locomotion.target);
     // 行き先がもうそばなら歩かない
-    if (Math.hypot(this.spot.x - y.center.x, this.spot.z - y.center.z) < y.shape.radius * ARRIVE) {
+    if (Math.hypot(this.backTo.x - y.center.x, this.backTo.z - y.center.z) < y.shape.radius * ARRIVE) {
       y.locomotion.stop();
       this.arrived();
     }
@@ -208,6 +274,20 @@ export class HatStash {
       return;
     }
     switch (this.phase) {
+      case 'clear': {
+        const loco = y.locomotion;
+        // ほかの行き先を指示された・あきらめた
+        if ((loco.hasTarget && Math.hypot(loco.target.x - this.clearTo.x, loco.target.z - this.clearTo.z) > 1e-3) || this.t > CLEAR_GIVE_UP) {
+          this.cancel();
+          break;
+        }
+        if (loco.hasTarget && Math.hypot(this.clearTo.x - y.center.x, this.clearTo.z - y.center.z) < y.shape.radius * ARRIVE) loco.stop();
+        if (!loco.hasTarget && loco.idle && !loco.tilted) {
+          loco.hold();
+          this.begin();
+        }
+        break;
+      }
       case 'grab': {
         const k = smooth(this.t / GRAB_TIME);
         this.setPose(0);
@@ -263,12 +343,12 @@ export class HatStash {
         hat.carry = this.carry.copy(this.ground);
         const loco = y.locomotion;
         // ほかの行き先を指示された・あきらめた
-        if ((loco.hasTarget && Math.hypot(loco.target.x - this.spot.x, loco.target.z - this.spot.z) > 1e-3) || this.t > BACK_GIVE_UP) {
+        if ((loco.hasTarget && Math.hypot(loco.target.x - this.backTo.x, loco.target.z - this.backTo.z) > 1e-3) || this.t > BACK_GIVE_UP) {
           this.cancel();
           break;
         }
         // 脱いだ所のそばまで来たら着いたことにする（ぴったりを狙うと、その周りを回り続けることがある）
-        if (loco.hasTarget && Math.hypot(this.spot.x - y.center.x, this.spot.z - y.center.z) < y.shape.radius * ARRIVE) loco.stop();
+        if (loco.hasTarget && Math.hypot(this.backTo.x - y.center.x, this.backTo.z - y.center.z) < y.shape.radius * ARRIVE) loco.stop();
         if (!loco.hasTarget && loco.idle && !loco.tilted) this.arrived();
         break;
       }
@@ -348,6 +428,8 @@ export class HatStash {
     const out = Math.max(R * PUT_SIDE, bodyExtent(y, this.side) + overhang + R * (this.upright ? UPRIGHT_GAP : PUT_GAP));
     this.putGrab.copy(this.spot).addScaledVector(this.side, out).addScaledVector(this.front, R * PUT_AHEAD);
     this.putGrab.y = (this.upright ? UPRIGHT_HEIGHT : PUT_HEIGHT) * scale - flipped.y;
+    this.putCenter.copy(this.putGrab).add(flipped).setY(0);
+    this.putRim = hat.brimLocal(0, 1, new THREE.Vector3()).setY(0).length() * scale;
   }
 
   /** 身ぶり：始めた向きを向き、三つ編みの側へ lean の割合だけ傾ける */

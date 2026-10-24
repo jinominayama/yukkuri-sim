@@ -27,6 +27,7 @@ import { Greet } from './greet';
 import { Death } from './death';
 import { Otabe } from './otabe';
 import { Home } from './home';
+import type { Stage } from '../world/Stage';
 import { Voice, type LineKey } from './lines';
 import { faceFrame, TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
@@ -126,6 +127,8 @@ export class Yukkuri {
   readonly voice: Voice;
   /** 見ている人（カメラ）の位置。ぷくーでその方を向く。main が渡す */
   viewer: THREE.Vector3 | null = null;
+  /** いる場所（マップ。壁・置き物・行ける範囲）。main が attachStage で渡す */
+  stage: Stage | null = null;
   /** 呼吸の大きさ・速さの倍率（眠っている間は大きくゆっくり。設定の値に掛ける） */
   breathGain = 1;
   breathSlow = 1;
@@ -273,6 +276,37 @@ export class Yukkuri {
     u.uHeadR.value = headR * this.shape.faceSize;
     const c = faceOrigin(this.shape, u.uHeadC.value as THREE.Vector3).sub(this.body.restCentroid);
     c.y += headR * this.shape.faceHeight;
+  }
+
+  /**
+   * いる場所（マップ）を渡す：マップの当たる物を体の当たりに入れ、行き先を行ける範囲の内側に寄せる。
+   * マップを変えたら、当たる物を入れ替え、範囲の外にいれば中へ置き直す（箱が外なら片付ける）
+   */
+  attachStage(stage: Stage): void {
+    this.stage = stage;
+    const own: typeof stage.colliders = [];
+    const sync = () => {
+      const boxes = this.body.boxes;
+      for (const c of own) {
+        const i = boxes.indexOf(c);
+        if (i >= 0) boxes.splice(i, 1);
+      }
+      own.length = 0;
+      own.push(...stage.colliders);
+      boxes.push(...own);
+      const c = this.body.center;
+      const p = { x: c.x, z: c.z };
+      if (stage.limit(p, this.stageMargin)) this.drop(0.3, p.x, p.z);
+      if (this.box.shown && !this.box.fits()) this.box.clear();
+    };
+    this.locomotion.limit = (t) => stage.limit(t, this.stageMargin);
+    stage.onChange = sync;
+    sync();
+  }
+
+  /** 行ける範囲の縁から体の中心までの間（m）：胴の半径に、横に広い体型・帽子のつばの分を足す */
+  get stageMargin(): number {
+    return this.shape.radius * 1.5;
   }
 
   /** 底が地面から height の高さになるよう置き直して落とす */

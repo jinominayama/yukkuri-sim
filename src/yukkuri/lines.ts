@@ -18,7 +18,7 @@ export type LineKey =
   | 'branchGo' | 'branchLower' | 'branchPick' | 'branchDrop' | 'branchThreat'
   | 'forageGo' | 'forageLower' | 'forageOnHat' | 'forageFull' | 'forageBusy' | 'forageSpill'
   | 'stashStart' | 'stashIn' | 'stashDone' | 'stashFull' | 'stashNone'
-  | 'boxGo' | 'boxPush' | 'boxDone' | 'boxBump'
+  | 'boxGo' | 'boxPush' | 'boxDone' | 'boxStuck' | 'boxBump'
   | 'declarePoo' | 'declareExercise' | 'declareMeal' | 'declareSleep'
   | 'greetYukkuri' | 'greetEatMe' | 'greetLast' | 'greetPlace'
   | 'dyingGasp';
@@ -78,6 +78,7 @@ const COMMON: Lines = {
   boxGo: ['はこさんをうごかすよ！', 'ゆっくりおすよ！', 'まかせてね！'],
   boxPush: ['ゆっ…ゆっ…', 'うんしょ…うんしょ…', 'ゆぎぎ…', 'おもいよ…', 'ゆ～ん…しょっ…', 'がんばるよ…！'],
   boxDone: ['ふぅ…ゆっくりうごいたよ！', 'ゆっへん！', 'やったよ！', 'ゆぅ…つかれたよ…'],
+  boxStuck: ['ゆぅ…うごかないよ…', 'かべさんがじゃまするよ…', 'ゆぎぎ…びくともしないよ…'],
   boxBump: ['ゆっ！？はこさんがあるよ…', 'とおれないよ…', 'ゆぅ…じゃまだよ…'],
   declarePoo: ['うんうんするよ！'],
   declareExercise: ['うんうんたいそうはじまるよ！'],
@@ -141,6 +142,7 @@ const MARISA_NOZE: Partial<Lines> = {
   boxGo: ['はこさんをうごかすのぜ！', 'まりさにまかせるのぜ！', 'おすのぜ！'],
   boxPush: ['ゆっ…ゆっ…', 'うんしょ…なのぜ…', 'ゆぎぎ…', 'おもいのぜ…', 'まりさはまけないのぜ…！', 'もうちょっとなのぜ…'],
   boxDone: ['ふぅ…うごいたのぜ！', 'ゆっへん！', 'まりさのちからをみたか、なのぜ！', 'ゆぅ…つかれたのぜ…'],
+  boxStuck: ['ゆぅ…うごかないのぜ…', 'かべさんがじゃまなのぜ…', 'ゆぎぎ…びくともしないのぜ…'],
   boxBump: ['ゆっ！？はこさんがじゃまなのぜ…', 'とおれないのぜ…', 'ゆぅ…どくのぜ…'],
   declarePoo: ['うんうんするのぜ！'],
   declareExercise: ['うんうんたいそうはじまるのぜ！'],

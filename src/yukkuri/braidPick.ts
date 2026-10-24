@@ -28,13 +28,16 @@ type Phase = 'idle' | 'approach' | 'turn' | 'lower' | 'touch' | 'lift';
 /** 横付け：物が体の真横（三つ編みの側）、中心からこの距離（胴の半径に対する比）・少し前に来る所で止まる */
 const SIDE_GAP = 1.25;
 const SIDE_AHEAD = 0.15;
+/** 止まる所が皿などに重なるかを見る、体の底の広がり（胴の半径に対する比） */
+const PROP_CLEAR = 0.8;
 /** 止まる所がこれより近ければ（胴の半径に対する比）歩かずにその場で向きだけ変える（すぐ後ろへは回り込めず、近くを回り続ける） */
 const NEAR_ENOUGH = 1.0;
 /** 向きを合わせる：差がこれ（rad）より小さくなるか、この時間（秒）たったら、かがむ */
 const TURN_OK = 0.15;
 const TURN_MAX = 2.5;
-/** あきらめるまでの時間（秒） */
+/** あきらめるまでの時間（秒）：これに、寄る道のり 1 m ごとに GIVE_UP_PER_M 秒を足す（飼育ケースの端から皿までで 15 秒を超えた） */
 const GIVE_UP = 15;
+const GIVE_UP_PER_M = 2;
 /** かがむ（三つ編みを下ろす）時間・沿わせて止まる時間・持ち上げる時間（秒） */
 const LOWER_TIME = 0.5;
 const TOUCH_TIME = 0.25;
@@ -60,6 +63,9 @@ export class BraidPick {
   private pace = 1;
   private readonly pose = new THREE.Quaternion();
   private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+  /** あきらめるまでの時間（秒。寄る道のりで変わる） */
+  private giveUp = GIVE_UP;
 
   constructor(private readonly y: Yukkuri) {}
 
@@ -134,7 +140,7 @@ export class BraidPick {
     switch (this.phase) {
       case 'approach':
         // ほかの行き先を指示された・あきらめた
-        if ((loco.hasTarget && loco.target.distanceTo(this.approachTarget) > 1e-3) || this.t > GIVE_UP) {
+        if ((loco.hasTarget && loco.target.distanceTo(this.approachTarget) > 1e-3) || this.t > this.giveUp) {
           this.cancel();
           break;
         }
@@ -239,8 +245,34 @@ export class BraidPick {
     this.heading = Math.atan2(toward.x, toward.z);
     const sideThen = new THREE.Vector3(toward.z, 0, -toward.x).multiplyScalar(this.side);
     const t = p.clone().addScaledVector(sideThen, -R * SIDE_GAP).addScaledVector(toward, -R * SIDE_AHEAD);
+    // 止まる所が皿など（体が乗れない物）にかかるなら、その物の外側（物の中心から拾う物を通って外）に横付けする。
+    // 外側がケースの壁ぎわやほかの皿で行けなければ、向きを左右へ回して行ける所を探す（皿の真ん中の餌で奥の壁の外に、
+    // 水皿の側の餌で水皿の上に寄ろうとした）。
+    // 向きは、拾う物が三つ編みの側に来る向き（寄った所が皿に止められて着かず、あきらめていた）
+    const stage = y.stage;
+    // 基準にするのは拾う物が載っている物（止まる所が一番深く重なる物にすると、隣の水皿を基準にして水皿の上に寄ろうとした）
+    const prop = stage?.overlapProp(t.x, t.z, R * PROP_CLEAR) ? (stage.overlapProp(p.x, p.z, 0) ?? stage.overlapProp(t.x, t.z, R * PROP_CLEAR)) : null;
+    if (stage && prop) {
+      const base = new THREE.Vector3(p.x - prop.x, 0, p.z - prop.z);
+      // 物のほぼ真ん中なら、今いる側から
+      if (base.lengthSq() < (R * 0.1) ** 2) base.copy(toward).negate();
+      const a0 = Math.atan2(base.x, base.z);
+      const out = new THREE.Vector3();
+      for (const k of [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6]) {
+        const a = a0 + k * (Math.PI / 6);
+        out.set(Math.sin(a), 0, Math.cos(a));
+        t.copy(p).addScaledVector(out, R * SIDE_GAP);
+        // 行ける範囲の内側で、ほかの皿（隣の水皿など）にかからない所（この皿にかかるのは、寄れば押し出されて止まるのでよい）
+        const free = stage.props.every((q) => q === prop || Math.hypot(t.x - q.x, t.z - q.z) > q.r + R * PROP_CLEAR);
+        if (stage.inside(t.x, t.z, y.stageMargin) && free) break;
+      }
+      // 体の右（side +1）が拾う物（-out）を向く：右 = (f.z, -f.x) = -out × side
+      const right = out.clone().multiplyScalar(-this.side);
+      this.heading = Math.atan2(-right.z, right.x);
+    }
     y.locomotion.moveTo(t.x, t.z);
     this.approachTarget.copy(y.locomotion.target);
+    this.giveUp = GIVE_UP + GIVE_UP_PER_M * Math.hypot(this.approachTarget.x - y.center.x, this.approachTarget.z - y.center.z);
   }
 }
 

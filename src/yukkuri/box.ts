@@ -109,20 +109,63 @@ export class PushBox {
     return this.phase !== 'idle';
   }
 
-  /** 箱を体の前に出す（出ていれば置き直す） */
+  /**
+   * 箱を体の前に出す（出ていれば置き直す）。前に置くと行ける範囲（ケースの壁）からはみ出す・皿に重なる・壁に寄せると体に重なるなら、
+   * 斜め前・横・後ろの順に置ける所を探す（どこもだめなら前に、壁の内側へ寄せて置く）
+   */
   spawn(): void {
     const y = this.y;
     this.stop();
     this.build();
     const f = bodyFacing(y);
     const d = bodyExtent(y, f) + y.shape.radius * (SPAWN_GAP + HALF);
-    this.collider.x = y.center.x + f.x * d;
-    this.collider.z = y.center.z + f.z * d;
-    this.collider.yaw = Math.atan2(f.x, f.z);
+    const base = Math.atan2(f.x, f.z);
+    const stage = y.stage;
+    const c = this.collider;
+    const p = { x: 0, z: 0 };
+    for (const k of [0, 1, -1, 2, -2, 3, -3, 4, 0]) {
+      const a = base + (k * Math.PI) / 4;
+      c.yaw = a;
+      p.x = y.center.x + Math.sin(a) * d;
+      p.z = y.center.z + Math.cos(a) * d;
+      if (!stage) break;
+      const [ex, ez] = this.extent();
+      stage.limit(p, ex, ez);
+      const clear = !stage.overlapProp(p.x, p.z, this.reach()) && Math.hypot(p.x - y.center.x, p.z - y.center.z) > d * 0.85;
+      if (clear) break;
+    }
+    c.x = p.x;
+    c.z = p.z;
     this.placed = true;
     this.object.visible = true;
     if (!y.body.boxes.includes(this.collider)) y.body.boxes.push(this.collider);
     this.sync();
+  }
+
+  /** 箱の中心から、地面の上で一番遠い角まで（m。向きによらない） */
+  private reach(): number {
+    return Math.hypot(this.collider.hx, this.collider.hz);
+  }
+
+  /** 今の向きの箱が地面の上で占める、中心から横（x）・奥行き（z）の幅（m） */
+  private extent(): [number, number] {
+    const c = this.collider;
+    const cs = Math.abs(Math.cos(c.yaw)), sn = Math.abs(Math.sin(c.yaw));
+    return [c.hx * cs + c.hz * sn, c.hx * sn + c.hz * cs];
+  }
+
+  /** 箱を中心（x, z）に置けるか：まるごと行ける範囲（ケースの壁）の内側で、皿などに重ならない */
+  private canBeAt(x: number, z: number): boolean {
+    const stage = this.y.stage;
+    if (!stage) return true;
+    const [ex, ez] = this.extent();
+    // 皿との重なりは、箱を内に収まる円（半分の幅の小さい方）で見る（角の円で見ると、離れていても止まる）
+    return stage.inside(x, z, ex, ez) && !stage.overlapProp(x, z, Math.min(this.collider.hx, this.collider.hz));
+  }
+
+  /** 箱が行ける範囲（ケースの壁）の内側にあり、皿などに重ならないか */
+  fits(): boolean {
+    return this.canBeAt(this.collider.x, this.collider.z);
   }
 
   /** 片付ける */
@@ -236,8 +279,11 @@ export class PushBox {
         const effort = u < 0.5 ? Math.sin(u * 2 * Math.PI) : 0;
         this.setPose(1, 1 + effort * 0.6);
         const speed = (PULSE_STEP * R * Math.PI) / PULSE; // 前半の sin を積むと 1 回で PULSE_STEP
-        const step = Math.min(R * PUSH_DIST - this.moved, speed * effort * dt);
+        let step = Math.min(R * PUSH_DIST - this.moved, speed * effort * dt);
         const c = this.collider;
+        // 壁や皿に当たる所で止める（それ以上は押せない）
+        const wall = step > 0 && !this.canBeAt(c.x + this.dir.x * step, c.z + this.dir.z * step);
+        if (wall) step = 0;
         c.x += this.dir.x * step;
         c.z += this.dir.z * step;
         y.body.translate(this.dir.x * step, this.dir.z * step);
@@ -247,11 +293,12 @@ export class PushBox {
           this.say(y.line('boxPush'), 0.2, 1.2);
           this.sayIn = SAY_EVERY;
         }
-        if (this.moved >= R * PUSH_DIST - 1e-6 || this.t > PUSH_GIVE_UP) {
+        if (this.moved >= R * PUSH_DIST - 1e-6 || this.t > PUSH_GIVE_UP || wall) {
           this.clearFace();
           showFace(y, FACE_DONE);
           this.face = y.face.override;
-          this.say(y.line('boxDone'), 0.22, 1.8);
+          // 壁や皿に当たって、ほとんど動かせなかった
+          this.say(y.line(wall && this.moved < R * 0.3 ? 'boxStuck' : 'boxDone'), 0.22, 1.8);
           this.go('rest');
         }
         break;

@@ -11,6 +11,7 @@ import { CHARACTERS } from '../character';
 import { MORU_WAG_MAX } from '../yukkuri/moru';
 import { voicesOf } from '../yukkuri/lines';
 import { STASH_MAX } from '../yukkuri/forage';
+import { FLOORS, MAPS } from '../world/Stage';
 import { allPresets, findPreset, isOverridden, resetPreset, saveLastPresetId, savePreset, USER_PRESET_ID } from '../yukkuri/presets';
 
 export interface ViewSettings {
@@ -134,12 +135,30 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
 
   // パネルは目的ごとに 5 つの大見出しにまとめる：
   //   体型プリセット … 体型の切り替え・保存・初期化
+  //   場所           … マップ（平地・飼育ケース）と床材
   //   させる         … 動き・体勢・ごはん・うんうん・吐餡・もるんもるんなど、押して動かすボタン（押したときの種類の指定も隣に置く）と、ぺにぺにの出し入れ
   //   見た目         … 顔・キャラクター・ぺにぺにの形・体の形・塗り・輪郭線
   //   動きの調整     … 移動・柔らかさ・呼吸・うんうんの出る位置・吐餡の起き方
   //   画面・カメラ   … つつく強さ・時間・カメラ
   // 小見出しの名前はロックの保存名に使う。変えたら locks.ts の RENAMED に足して、前にロックした値を引き継ぐ
   const noLock = (c: { domElement: HTMLElement }) => c.domElement.classList.add('no-lock');
+
+  // ---- 場所 ----
+  // マップを選ぶ。飼育ケースのときだけ床材を選べる
+  const place = gui.addFolder('場所');
+  const stage = y.stage;
+  if (stage) {
+    const sel = { map: stage.map, floor: stage.floor };
+    place.add(sel, 'map', Object.fromEntries(MAPS.map((m) => [m.label, m.id]))).name('マップ')
+      .onChange((v: typeof sel.map) => {
+        stage.map = v;
+        floorCtl.show(v === 'cage');
+      });
+    const floorCtl = place.add(sel, 'floor', Object.fromEntries(FLOORS.map((f) => [f.label, f.id]))).name('床材')
+      .onChange((v: typeof sel.floor) => (stage.floor = v));
+    floorCtl.show(stage.map === 'cage');
+    place.controllers.forEach(noLock);
+  }
 
   // ---- させる ----
   const doGroup = gui.addFolder('させる');

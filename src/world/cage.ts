@@ -1,0 +1,284 @@
+import * as THREE from 'three';
+import type { BoxCollider } from '../physics/SoftBody';
+import { createAccessoryMaterial } from '../render/accessoryMaterial';
+import { createAccessoryOutlineMaterial } from '../render/outlineMaterial';
+import { withOutline } from '../character/shapes';
+import { floorTexture, type FloorId } from './floorTextures';
+import type { Area } from './Stage';
+
+/**
+ * 飼育ケース（ガラスの水槽）：中の広さは 横 W × 奥行き D m（体 10 × 6 つ分）、壁の高さ H m。原点が床の真ん中、奥が -z。
+ *   壁 … 透明なガラス（光の筋の映り込み）と、角と縁の枠。カメラの側の壁（カメラが壁の外にある面）はさらに薄くして中を見やすく
+ *   床 … 床材（新聞紙・おがくず・タオル）を切り替える
+ *   置く物 … 餌皿・水皿（当たる。体は乗れない）と、寝床の布（当たらない。上に乗る）。どれも奥の壁ぎわ
+ * 当たり：壁は外へ厚い箱（体を中へ押し返す。薄いとすり抜ける）
+ */
+export const CAGE_W = 10;
+export const CAGE_D = 6;
+const H = 2;
+/** 壁の当たりの厚み（m。外へ） */
+const WALL_T = 1;
+/** 枠の太さ（m） */
+const FRAME = 0.06;
+/** ガラスの濃さ：ふつう／カメラの側の壁 */
+const GLASS_OPACITY = 0.45;
+const GLASS_NEAR_OPACITY = 0.15;
+
+/** 置く物の場所と大きさ（m） */
+// 水皿と寝床は、ゆっくりが普通の 1/4 という体に合わせて最初の倍の大きさ（指示）。大きくした分、壁から離して並べ直した。
+// 餌皿は元の大きさ（指示。大きくしても、体が乗れないので餌を置ける所は縁寄りだけで、使わない所が多かった）
+const FOOD_DISH = { x: 2.55, z: -2.1, r: 0.34, h: 0.1 };
+const WATER_DISH = { x: 3.85, z: -1.95, r: 0.6, h: 0.22 };
+const BED = { x: -3.0, z: -1.5, w: 3.4, d: 2.6, t: 0.05 };
+
+const FRAME_COLORS = { lit: '#8d969c', shade: '#6d757b', deep: '#545b60', rim: '#d6dde2' };
+const FOOD_DISH_COLORS = { lit: '#fbf3e4', shade: '#eadcc4', deep: '#cdb99a', rim: '#ffffff' };
+const WATER_DISH_COLORS = { lit: '#d7eaf5', shade: '#b9d4e6', deep: '#93b4cc', rim: '#ffffff' };
+/** 皿の縁の色の線（上から見ても縁と分かるように） */
+const FOOD_DISH_LINE = { lit: '#e9a35f', shade: '#d48a45', deep: '#b06d30', rim: '#ffe9cf' };
+const WATER_DISH_LINE = { lit: '#5f9fd0', shade: '#4a86b8', deep: '#356b98', rim: '#d9eefa' };
+const BED_COLORS = { lit: '#f6e3b8', shade: '#e8cd96', deep: '#cfae72', rim: '#fff8e6' };
+/** 寝床の縫い目 */
+const BED_STITCH = { lit: '#d9b47a', shade: '#c79e62', deep: '#a9814a', rim: '#fff3d8' };
+
+interface Glass {
+  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  /** 外向きの法線と、壁の上の 1 点 */
+  out: THREE.Vector3;
+  at: THREE.Vector3;
+}
+
+export class Cage {
+  readonly object = new THREE.Group();
+  readonly colliders: BoxCollider[] = [];
+  readonly area: Area = { minX: -CAGE_W / 2, maxX: CAGE_W / 2, minZ: -CAGE_D / 2, maxZ: CAGE_D / 2 };
+  /**
+   * 餌皿：中心と、餌を置く輪（中心からの距離 m）と、中心から dist m の所の内側の底の高さ。
+   * 輪は平らな底の内側：餌（差し渡し 16〜19 cm）の端が皿の内側の壁に入らない所まで
+   * （縁寄りの 0.55〜0.7 倍に置くと、皿を元の大きさに戻したとき餌が皿の壁を突き抜けた）
+   */
+  readonly foodDish = {
+    x: FOOD_DISH.x, z: FOOD_DISH.z, ring: [FOOD_DISH.r * 0.1, FOOD_DISH.r * 0.4] as const,
+    floorAt: (dist: number) => bowlFloor(FOOD_DISH.r, FOOD_DISH.h, dist),
+  };
+  /** 置いてある物（体が乗れない所）：餌皿・水皿の中心と半径 */
+  readonly props = [FOOD_DISH, WATER_DISH].map((d) => ({ x: d.x, z: d.z, r: d.r }));
+  private readonly floor: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  private readonly glass: Glass[] = [];
+  private readonly disposables: { dispose(): void }[] = [];
+  private floorId: FloorId | null = null;
+
+  constructor(body: THREE.ShaderMaterial, outlineBody: THREE.ShaderMaterial, floor: FloorId) {
+    const outline = createAccessoryOutlineMaterial(outlineBody);
+    // 地面に押し付けない（皿の底などが持ち上がらないように）
+    const mat = (c: typeof FRAME_COLORS, doubleSide = false) => createAccessoryMaterial(body, c, { rim: 0.2, ground: -10, doubleSide });
+    const frameMat = mat(FRAME_COLORS);
+    this.disposables.push(outline, frameMat);
+
+    // 床（床材の絵。地面より手前に描く）
+    this.floor = new THREE.Mesh(new THREE.PlaneGeometry(CAGE_W, CAGE_D).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial());
+    this.floor.position.y = 0.0005;
+    this.object.add(this.floor);
+    this.setFloor(floor);
+
+    // ガラス：前後・左右の 4 面
+    const streaks = glassStreaks();
+    this.disposables.push(streaks);
+    const walls: [number, number, number, number][] = [
+      // 中心 x, z、幅、向き（外向きの法線の角度）
+      [0, -CAGE_D / 2, CAGE_W, Math.PI],
+      [0, CAGE_D / 2, CAGE_W, 0],
+      [-CAGE_W / 2, 0, CAGE_D, -Math.PI / 2],
+      [CAGE_W / 2, 0, CAGE_D, Math.PI / 2],
+    ];
+    for (const [x, z, w, a] of walls) {
+      const m = new THREE.MeshBasicMaterial({
+        color: '#d9eef5', map: streaks, transparent: true, opacity: GLASS_OPACITY, depthWrite: false, side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, H), m);
+      mesh.position.set(x, H / 2, z);
+      mesh.rotation.y = a;
+      mesh.renderOrder = 10;
+      this.object.add(mesh);
+      this.glass.push({ mesh, out: new THREE.Vector3(Math.sin(a), 0, Math.cos(a)), at: new THREE.Vector3(x, 0, z) });
+      // 当たり：外へ厚い箱
+      const nx = Math.sin(a), nz = Math.cos(a);
+      const along = Math.abs(nx) > 0.5;
+      this.colliders.push({
+        x: x + nx * WALL_T / 2, z: z + nz * WALL_T / 2, yaw: 0,
+        hx: along ? WALL_T / 2 : w / 2 + WALL_T, hz: along ? w / 2 + WALL_T : WALL_T / 2, h: H, contacts: 0,
+      });
+    }
+
+    // 枠：下の縁は太め、上の縁と角の柱は細め
+    const addFrame = (g: THREE.BufferGeometry) => {
+      this.disposables.push(g);
+      this.object.add(withOutline(g, frameMat, outline));
+    };
+    const W2 = CAGE_W / 2, D2 = CAGE_D / 2;
+    for (const [y, t] of [[FRAME * 1.2, FRAME * 2.4], [H, FRAME]] as const) {
+      for (const s of [-1, 1]) {
+        addFrame(new THREE.BoxGeometry(CAGE_W + FRAME * 2, t, FRAME).translate(0, y - t / 2 + (y === H ? t / 2 : 0), s * (D2 + FRAME / 2)));
+        addFrame(new THREE.BoxGeometry(FRAME, t, CAGE_D + FRAME * 2).translate(s * (W2 + FRAME / 2), y - t / 2 + (y === H ? t / 2 : 0), 0));
+      }
+    }
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) addFrame(new THREE.BoxGeometry(FRAME, H, FRAME).translate(sx * (W2 + FRAME / 2), H / 2, sz * (D2 + FRAME / 2)));
+    }
+
+    // 餌皿・水皿（当たる）
+    const dish = (d: typeof FOOD_DISH, colors: typeof FRAME_COLORS, line: typeof FRAME_COLORS, water: boolean) => {
+      const m = mat(colors, true);
+      const g = new THREE.LatheGeometry(bowlProfile(d.r, d.h), 48);
+      const lm = mat(line);
+      const lg = new THREE.TorusGeometry(d.r * 0.965, d.r * 0.03, 8, 64).rotateX(Math.PI / 2).translate(0, d.h * 0.985, 0);
+      // 輪郭線は外側の形（上をふさいだ形）だけで描く（器の形のままだと、線が内側の奥の壁に透けて見えた）
+      const og = new THREE.LatheGeometry(bowlOutline(d.r, d.h), 48);
+      this.disposables.push(m, g, lm, lg, og);
+      const obj = withOutline(og, outline, null);
+      obj.add(new THREE.Mesh(g, m), new THREE.Mesh(lg, lm));
+      obj.position.set(d.x, 0, d.z);
+      this.object.add(obj);
+      if (water) {
+        const wm = new THREE.MeshBasicMaterial({ color: '#8fc7e8', transparent: true, opacity: 0.75 });
+        const wg = new THREE.CircleGeometry(d.r * 0.86, 40).rotateX(-Math.PI / 2);
+        this.disposables.push(wm, wg);
+        const surface = new THREE.Mesh(wg, wm);
+        surface.position.set(d.x, d.h * 0.72, d.z);
+        this.object.add(surface);
+      }
+      const half = d.r * 0.92;
+      this.colliders.push({ x: d.x, z: d.z, yaw: 0, hx: half, hz: half, h: d.h, contacts: 0 });
+    };
+    dish(FOOD_DISH, FOOD_DISH_COLORS, FOOD_DISH_LINE, false);
+    dish(WATER_DISH, WATER_DISH_COLORS, WATER_DISH_LINE, true);
+
+    // 寝床の布（薄い敷き物。当たらない）
+    const bedMat = mat(BED_COLORS);
+    const bedGeo = cushion(BED.w, BED.d, BED.t);
+    // 縁から少し内側をぐるりと縫い目
+    const stitchMat = mat(BED_STITCH);
+    const stitchGeo = stitch(BED.w, BED.d, BED.t);
+    this.disposables.push(bedMat, bedGeo, stitchMat, stitchGeo);
+    const bed = withOutline(bedGeo, bedMat, outline);
+    bed.add(new THREE.Mesh(stitchGeo, stitchMat));
+    bed.position.set(BED.x, 0.001, BED.z);
+    bed.rotation.y = 0.06;
+    this.object.add(bed);
+  }
+
+  setFloor(id: FloorId): void {
+    if (id === this.floorId) return;
+    this.floorId = id;
+    const m = this.floor.material;
+    m.map?.dispose();
+    m.map = floorTexture(id, CAGE_W, CAGE_D);
+    m.needsUpdate = true;
+  }
+
+  /** 毎フレーム：カメラの側の壁（カメラがその壁の外にある）を薄くする */
+  update(camera: THREE.Vector3): void {
+    for (const g of this.glass) {
+      const outside = (camera.x - g.at.x) * g.out.x + (camera.z - g.at.z) * g.out.z > 0;
+      g.mesh.material.opacity = outside ? GLASS_NEAR_OPACITY : GLASS_OPACITY;
+    }
+  }
+
+  dispose(): void {
+    this.floor.material.map?.dispose();
+    this.floor.material.dispose();
+    this.floor.geometry.dispose();
+    for (const g of this.glass) {
+      g.mesh.material.dispose();
+      g.mesh.geometry.dispose();
+    }
+    for (const d of this.disposables) d.dispose();
+  }
+}
+
+/** 浅い器の断面（中心の底 → 内側の壁 → 縁 → 外側 → 高台）。半径 r・高さ h */
+function bowlProfile(r: number, h: number): THREE.Vector2[] {
+  return [
+    [0, h * 0.25], [r * 0.55, h * 0.26], [r * 0.75, h * 0.38], [r * 0.88, h * 0.7], [r * 0.93, h * 0.97],
+    [r * 0.97, h], [r, h * 0.94], [r * 0.95, h * 0.55], [r * 0.82, h * 0.18], [r * 0.7, h * 0.08], [r * 0.7, 0], [0, 0],
+  ].map(([x, y]) => new THREE.Vector2(x, y));
+}
+
+/** 器の内側の底の高さ（中心から dist m の所。断面の内側の点をつないだ線の上） */
+function bowlFloor(r: number, h: number, dist: number): number {
+  const p = bowlProfile(r, h).slice(0, 5);
+  for (let i = 1; i < p.length; i++) {
+    if (dist <= p[i].x) {
+      const k = (dist - p[i - 1].x) / (p[i].x - p[i - 1].x);
+      return p[i - 1].y + (p[i].y - p[i - 1].y) * k;
+    }
+  }
+  return p[p.length - 1].y;
+}
+
+/** 器の外側の形（縁の上でふさぐ）：輪郭線用 */
+function bowlOutline(r: number, h: number): THREE.Vector2[] {
+  return [
+    [0, h], [r * 0.97, h], [r, h * 0.94], [r * 0.95, h * 0.55], [r * 0.82, h * 0.18], [r * 0.7, h * 0.08], [r * 0.7, 0], [0, 0],
+  ].reverse().map(([x, y]) => new THREE.Vector2(x, y)); // 下から上へ並べる（逆だと面の表裏が反対になり、ふたの裏が上から見えた）
+}
+
+/** 角の丸い長方形（横 w × 奥行き d、角の半径 r。中心が原点） */
+function roundRect(w: number, d: number, r: number, s: THREE.Shape | THREE.Path = new THREE.Shape()): THREE.Shape | THREE.Path {
+  s.moveTo(-w / 2 + r, -d / 2);
+  s.lineTo(w / 2 - r, -d / 2);
+  s.quadraticCurveTo(w / 2, -d / 2, w / 2, -d / 2 + r);
+  s.lineTo(w / 2, d / 2 - r);
+  s.quadraticCurveTo(w / 2, d / 2, w / 2 - r, d / 2);
+  s.lineTo(-w / 2 + r, d / 2);
+  s.quadraticCurveTo(-w / 2, d / 2, -w / 2, d / 2 - r);
+  s.lineTo(-w / 2, -d / 2 + r);
+  s.quadraticCurveTo(-w / 2, -d / 2, -w / 2 + r, -d / 2);
+  return s;
+}
+
+/** 角の丸い薄い敷き物（横 w × 奥行き d、厚み t。底が y = 0） */
+function cushion(w: number, d: number, t: number): THREE.BufferGeometry {
+  const s = roundRect(w, d, Math.min(w, d) * 0.18) as THREE.Shape;
+  const bevel = t * 0.45;
+  const g = new THREE.ExtrudeGeometry(s, { depth: t - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 3, curveSegments: 10 });
+  // 押し出しの向き（+z）を上へ
+  g.rotateX(-Math.PI / 2);
+  g.translate(0, bevel, 0);
+  return g;
+}
+
+/** 敷き物の縫い目：縁から内側へ 0.2 m の所をぐるりと、幅 3 cm の帯（敷き物の上面に乗せる） */
+function stitch(w: number, d: number, t: number): THREE.BufferGeometry {
+  const IN = 0.2, BAND = 0.03;
+  const r = Math.min(w, d) * 0.18;
+  const s = roundRect(w - IN * 2, d - IN * 2, r * 0.7) as THREE.Shape;
+  s.holes.push(roundRect(w - (IN + BAND) * 2, d - (IN + BAND) * 2, r * 0.7 - BAND, new THREE.Path()) as THREE.Path);
+  const g = new THREE.ShapeGeometry(s, 10);
+  g.rotateX(-Math.PI / 2);
+  g.translate(0, t + 0.001, 0);
+  return g;
+}
+
+/** ガラスの映り込み：斜めの白い筋を数本（筋の所だけ濃い。地は薄く、ガラスの濃さを掛ける） */
+function glassStreaks(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 256;
+  const g = c.getContext('2d')!;
+  g.fillStyle = 'rgba(255,255,255,0.35)';
+  g.fillRect(0, 0, 512, 256);
+  g.fillStyle = '#ffffff';
+  for (const [x, w] of [[90, 26], [130, 8], [330, 40], [385, 10]]) {
+    g.beginPath();
+    g.moveTo(x, 256);
+    g.lineTo(x + w, 256);
+    g.lineTo(x + w + 110, 0);
+    g.lineTo(x + 110, 0);
+    g.closePath();
+    g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}

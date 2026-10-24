@@ -621,9 +621,13 @@ export class Locomotion {
     return this.state === 'lieDown' || this.state === 'lying';
   }
 
+  /** 行き先を行ける範囲の内側へ寄せる（マップに壁があるとき。Yukkuri が渡す） */
+  limit: ((p: Vector3) => void) | null = null;
+
   /** 行き先を決める。mode を渡すと、そこへ向かう間だけその移動方法にする（跳ねられない体型は這う） */
   moveTo(x: number, z: number, mode: MoveMode | null = null): void {
     this.target.set(x, 0, z);
+    this.limit?.(this.target);
     this.targetMode = mode;
     this.idleFor = 0;
     if (this.holding) this.deferred = true;

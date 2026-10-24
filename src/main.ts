@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Yukkuri } from './yukkuri/Yukkuri';
 import { createDebugGui, type ViewSettings } from './debug/gui';
+import { Stage } from './world/Stage';
 
 const BG = '#f7f4ef';
 /** シミュレーションの固定時間刻み */
@@ -42,10 +43,10 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   controls.mouseButtons.RIGHT = e.ctrlKey ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
 }, { capture: true });
 
-// 地面
+// 地面（マップの床があれば、その下に隠れる）
 const ground = new THREE.Mesh(
   new THREE.CircleGeometry(20, 64).rotateX(-Math.PI / 2),
-  new THREE.MeshBasicMaterial({ color: '#ece4d8' }),
+  new THREE.MeshBasicMaterial({ color: '#ece4d8', polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
 );
 scene.add(ground);
 
@@ -67,6 +68,10 @@ scene.add(yukkuri.texts.object);
 scene.add(yukkuri.branch.object);
 scene.add(yukkuri.forage.object);
 scene.add(yukkuri.box.object);
+// いる場所（マップ）
+const stage = new Stage(yukkuri.bodyMaterial, yukkuri.outlineMaterial);
+scene.add(stage.object);
+yukkuri.attachStage(stage);
 yukkuri.drop(0.6);
 // 帽子の先まで入るよう、少し上を見て少し引く
 controls.target.set(0, yukkuri.height * 0.7, 0);
@@ -90,7 +95,7 @@ if (import.meta.env.DEV) {
     await fetch(`/__debug/screenshot?name=${encodeURIComponent(name)}`, { method: 'POST', body: blob });
     return `saved ${name}.png`;
   };
-  Object.assign(window, { yukkuri, view, camera, controls, advance, snap, scene, THREE });
+  Object.assign(window, { yukkuri, view, camera, controls, advance, snap, scene, THREE, stage });
 }
 yukkuri.viewer = camera.position; // ぷくーでカメラの方を向く（同じ物を渡すので、カメラが動けば追う）
 createDebugGui(yukkuri, view);
@@ -169,5 +174,6 @@ renderer.setAnimationLoop(() => {
   // 戻すと、上限の角度まで引き戻される
   controls.maxPolarAngle = view.freeCamera || ctrlFreeCamera ? Math.PI : CAMERA_MAX_POLAR;
   controls.update();
+  stage.update(camera.position);
   renderer.render(scene, camera);
 });

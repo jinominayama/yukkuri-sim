@@ -41,6 +41,8 @@ interface Item {
   readonly spin: THREE.Vector3;
   /** 帽子にしまう途中（つばから落とした餌。拾って中へ入れる） */
   stash: boolean;
+  /** 置いてある所の高さ（m。地面は 0、餌皿の中は皿の底） */
+  base: number;
 }
 
 /** 餌の大きさ（胴の半径に対する比。形は単位の大きさで作る） */
@@ -71,6 +73,8 @@ const SPAWN_AHEAD = [2.2, 3.2];
 const SPAWN_SIDE = 1.2;
 /** 地面に出しておける数 */
 const MAX_GROUND = 24;
+/** 餌皿に出すとき、置く所を試す数 */
+const DISH_TRIES = 12;
 /** 放る時間（秒）と、放物線の高さ（胴の半径に対する比） */
 const TOSS_TIME = 0.45;
 const TOSS_ARC = 0.9;
@@ -166,7 +170,7 @@ export class Forage {
     return this.picker.active || this.stash.active;
   }
 
-  /** 餌を 1 個出す（ゆっくりの前の地面に。種類は kindId） */
+  /** 餌を 1 個出す（ゆっくりの前の地面に。餌皿のあるマップ（飼育ケース）なら餌皿の中に。種類は kindId） */
   spawn(): void {
     if (this.onGround >= MAX_GROUND) return;
     const y = this.y;
@@ -177,15 +181,36 @@ export class Forage {
     const side = new THREE.Vector3(f.z, 0, -f.x);
     const ahead = SPAWN_AHEAD[0] + Math.random() * (SPAWN_AHEAD[1] - SPAWN_AHEAD[0]);
     const p = y.center.clone().addScaledVector(f, R * ahead).addScaledVector(side, R * SPAWN_SIDE * (Math.random() * 2 - 1));
+    // ケースの壁の外へは出さない
+    y.stage?.limit(p, R * 0.4);
+    // 餌皿があれば皿の中（平らな底の上。置く輪は Cage.foodDish）
+    const dish = y.stage?.foodDish;
+    let base = 0;
+    if (dish) {
+      // 何か所か試して、すでに置いてある餌から一番離れた所に（重なってめり込まないように）
+      let best = -1;
+      for (let k = 0; k < DISH_TRIES; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const r = dish.ring[0] + Math.random() * (dish.ring[1] - dish.ring[0]);
+        const x = dish.x + Math.sin(a) * r, z = dish.z + Math.cos(a) * r;
+        let near = Infinity;
+        for (const it of this.items) if (it.state === 'ground') near = Math.min(near, Math.hypot(it.object.position.x - x, it.object.position.z - z));
+        if (near > best) {
+          best = near;
+          p.set(x, 0, z);
+          base = dish.floorAt(r);
+        }
+      }
+    }
     const object = this.makeItem(kind.id);
     object.scale.setScalar(R * SIZE);
     this.object.add(object);
     const item: Item = {
       kind, object, state: 'ground', slot: -1, yaw: Math.random() * Math.PI * 2, t: 0,
-      from: new THREE.Vector3(), vel: new THREE.Vector3(), spin: new THREE.Vector3(), stash: false,
+      from: new THREE.Vector3(), vel: new THREE.Vector3(), spin: new THREE.Vector3(), stash: false, base: 0,
     };
     this.items.push(item);
-    this.placeOnGround(item, p.x, p.z);
+    this.placeOnGround(item, p.x, p.z, base);
   }
 
   /** 一番近い地面の餌を拾いに行く（拾い方が「帽子に直接入れる」なら pickIntoHat） */
@@ -616,8 +641,10 @@ export class Forage {
     } else item.state = 'ground';
   }
 
-  private placeOnGround(it: Item, x: number, z: number): void {
+  /** 地面（base を渡せば、その高さの物の上）に置く */
+  private placeOnGround(it: Item, x: number, z: number, base = 0): void {
     it.state = 'ground';
+    it.base = base;
     it.vel.set(0, 0, 0);
     it.object.quaternion.copy(this.groundQuat(it));
     it.object.position.set(x, this.groundY(it), z);
@@ -639,7 +666,7 @@ export class Forage {
   /** 地面に置いたときの中心の高さ */
   private groundY(it: Item): number {
     const s = this.y.shape.radius * SIZE;
-    return (it.kind.id === 'acorn' ? 0.42 : this.restLift(it.kind.id)) * s;
+    return (it.kind.id === 'acorn' ? 0.42 : this.restLift(it.kind.id)) * s + it.base;
   }
 
   /** 立てて置いたとき、中心から底までの高さ（単位の大きさ） */
