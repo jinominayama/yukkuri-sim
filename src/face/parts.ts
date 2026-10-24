@@ -59,6 +59,11 @@ export const PARTS: PartDef[] = [
       { id: 'squeeze', name: 'ぎゅっ（> <）', value: { eyes: { kind: 'squeeze' } } },
       { id: 'wink', name: 'ウインク', value: { eyes: { kind: 'open', open: 0.95, other: 'smile' } } },
       { id: 'shock', name: '白目', value: { eyes: { kind: 'shock' } } },
+      // 脱力した白目：半目で、瞳が上まぶたの裏へ上がって白目だけが見える（死んだとき。丸い白目は力が入って見えた）
+      { id: 'limp', name: '白目（半目）', value: { eyes: { kind: 'open', open: 0.42, look: [0, 0.9] } } },
+      // 死んだときに試した半目（使わなかったもの）：瞳が上まぶたへ半分隠れる・目尻の下がったうつろな半目
+      { id: 'limpUp', name: '半目（瞳が上）', value: { eyes: { kind: 'open', open: 0.42, look: [0, 0.55] } } },
+      { id: 'vacant', name: 'うつろな半目', value: { eyes: { kind: 'open', open: 0.38, lid: 0.3, look: [0, -0.15] } } },
       { id: 'cross', name: '×', value: { eyes: { kind: 'cross' } } },
       { id: 'swirl', name: 'ぐるぐる（＠ ＠）', value: { eyes: { kind: 'swirl' } } },
     ],
@@ -83,6 +88,8 @@ export const PARTS: PartDef[] = [
       { id: 'smileSmall', name: 'ほほえみ', value: { mouth: { kind: 'smileOpen', open: 0.55 } } },
       { id: 'openSmall', name: 'ぽかん', value: { mouth: { kind: 'openSmall' } } },
       { id: 'sob', name: '泣き', value: { mouth: { kind: 'sob' } } },
+      { id: 'sobWeak', name: '弱々しく泣き', value: { mouth: { kind: 'sob', open: 0.4, width: 0.75 } } },
+      { id: 'slack', name: '半開き', value: { mouth: { kind: 'sob', open: 0.3, width: 0.6 } } },
       { id: 'wail', name: '叫び', value: { mouth: { kind: 'wail', open: 1 } } },
       { id: 'grit', name: '食いしばり', value: { mouth: { kind: 'grit' } } },
       { id: 'grin', name: '歯見せ笑い', value: { mouth: { kind: 'grin' } } },

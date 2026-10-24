@@ -43,7 +43,7 @@ export class Greet {
    */
   declare(key: LineKey, can: () => boolean, then: () => void): boolean {
     const y = this.y;
-    if (this.pending || y.rest.fainting || !can()) return false;
+    if (this.pending || y.rest.fainting || y.death.active || !can()) return false;
     if (!this.declareFirst) {
       then();
       return true;
@@ -59,6 +59,7 @@ export class Greet {
   /** 挨拶を言う */
   say(key: LineKey): void {
     const y = this.y;
+    if (y.death.active) return; // 死んでいく途中・死んだ後は言わない
     const R = y.shape.radius;
     const text = y.line(key).replace('{species}', y.outfit.character.kana ?? 'ゆっくり');
     const pos = new THREE.Vector3(y.center.x, y.center.y + y.height * 0.5 + R * 0.45, y.center.z);

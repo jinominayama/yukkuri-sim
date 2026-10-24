@@ -164,7 +164,8 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(greet.add(y.greet, 'declareFirst').name('動作の前に宣言する').onChange(() => y.greet.save()));
   greet.add({ f: () => y.greet.say('greetYukkuri') }, 'f').name('ゆっくりしていってね！');
   greet.add({ f: () => y.greet.say('greetEatMe') }, 'f').name('おたべなさい！');
-  greet.add({ f: () => y.greet.say('greetLast') }, 'f').name('もっとゆっくりしたかったよ…');
+  // 死ぬ：言ってから、震えながら柔らかく黒ずんで止まる（戻すのはページの読み直し）
+  greet.add({ f: () => { if (!y.death.active && !y.rest.fainting) { y.greet.say('greetLast'); y.death.start(); } } }, 'f').name('もっとゆっくりしたかったよ…');
   greet.add({ f: () => y.greet.say('greetPlace') }, 'f').name('ここを○○のゆっくりぷれいすにするよ！');
   /** 宣言してから始める動作（食べる・うんうん・たいそう・眠る）を、今始められるか（ほかの動作の途中・気絶中は始めない。眠っていれば宣言で起こす） */
   const canAct = () => !(y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.rest.fainting);

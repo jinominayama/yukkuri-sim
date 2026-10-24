@@ -20,7 +20,8 @@ export type LineKey =
   | 'stashStart' | 'stashIn' | 'stashDone' | 'stashFull' | 'stashNone'
   | 'boxGo' | 'boxPush' | 'boxDone' | 'boxBump'
   | 'declarePoo' | 'declareExercise' | 'declareMeal' | 'declareSleep'
-  | 'greetYukkuri' | 'greetEatMe' | 'greetLast' | 'greetPlace';
+  | 'greetYukkuri' | 'greetEatMe' | 'greetLast' | 'greetPlace'
+  | 'dyingGasp';
 
 type Lines = Record<LineKey, string[]>;
 
@@ -86,6 +87,7 @@ const COMMON: Lines = {
   greetEatMe: ['おたべなさい！'],
   greetLast: ['もっとゆっくりしたかったよ…'],
   greetPlace: ['ここを{species}のゆっくりぷれいすにするよ！'],
+  dyingGasp: ['ゆ゛っ…ゆ゛っ…', 'ゆ゛っ…', 'ゆ゛…', 'ゆ゛っ…ゆ゛…'],
 };
 
 /** 魔理沙の「のぜ」口調（〜なのぜ・〜だぜ）。叫び・泣き声など口調の出ないものは共通と同じ */

@@ -96,8 +96,15 @@ export class Face {
     saveJSON(STORAGE_KEY, this.settings);
   }
 
+  /** 止める（まばたきも視線も動かさない。死んだときなど） */
+  frozen = false;
+
   /** 固定時間刻みで呼ぶ：まばたきを進める */
   update(dt: number): void {
+    if (this.frozen) {
+      this.blinkT = -1;
+      return;
+    }
     const [tx, ty] = this.gazeTarget ?? [0, 0];
     const k = Math.min(1, dt * GAZE_FOLLOW);
     this.gaze[0] += (tx - this.gaze[0]) * k;

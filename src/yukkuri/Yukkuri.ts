@@ -24,6 +24,7 @@ import { Branch } from './branch';
 import { Forage } from './forage';
 import { PushBox } from './box';
 import { Greet } from './greet';
+import { Death } from './death';
 import { Voice, type LineKey } from './lines';
 import { faceFrame, TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
@@ -113,6 +114,8 @@ export class Yukkuri {
   readonly box: PushBox;
   /** あいさつ（動作の前の宣言と、挨拶） */
   readonly greet: Greet;
+  /** 死ぬ（「もっとゆっくりしたかったよ…」の後）。死んでいく間と死んだ後は、ほかの動きを動かさない */
+  readonly death: Death;
   /** セリフの口調（キャラクターごとに選ぶ。保存する） */
   readonly voice: Voice;
   /** 見ている人（カメラ）の位置。ぷくーでその方を向く。main が渡す */
@@ -188,6 +191,7 @@ export class Yukkuri {
     this.forage = new Forage(this);
     this.box = new PushBox(this);
     this.greet = new Greet(this);
+    this.death = new Death(this);
     this.puku.usePreset(this.presetId);
     this.peni = new Peni(this);
     this.peni.usePreset(this.presetId);
@@ -382,6 +386,15 @@ export class Yukkuri {
     // 呼吸：速さを変えても波が飛ばないよう、位相を積み上げる
     this.breathPhase = (this.breathPhase + dt * Math.PI * 2 * this.life.breathRate * this.breathSlow) % (Math.PI * 2);
     this.body.volumeScale = 1 + this.life.breath * this.breathGain * Math.sin(this.breathPhase);
+    // 死んでいく間・死んだ後：ほかの動きは動かさず、体の物理と、つつかれてへこむ動きだけ
+    if (this.death.active) {
+      this.death.update(dt);
+      this.locomotion.update(dt, this.physics.gravity);
+      this.poking.update(dt);
+      this.texts.update(dt);
+      this.body.step(dt, this.physics);
+      return;
+    }
     // 寝返りで横へずれてから起き上がる：寝返りが終わったら、まだ塊に近ければもう一度、離れていれば起き上がる
     if (this.rollingAside && this.locomotion.resting) this.getUp();
     this.watchFall();

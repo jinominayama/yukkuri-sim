@@ -168,7 +168,8 @@ export class Poke {
   private hit(point: THREE.Vector3, dir: THREE.Vector3, strength: number, slap: boolean): void {
     const y = this.y;
     const R = y.shape.radius;
-    y.rest.wake(true); // 眠っていたら起きる（顔はつつかれた反応にする）
+    const dead = y.death.active; // 死んでいく途中・死んだ後は、体が押される・へこむだけ（起きない・ストレス・顔・声なし）
+    if (!dead) y.rest.wake(true); // 眠っていたら起きる（顔はつつかれた反応にする）
     this.point.copy(point);
     this.velocity.copy(dir).normalize().multiplyScalar(strength);
     this.pushLeft = slap ? SLAP_TIME : PUSH_TIME;
@@ -176,6 +177,7 @@ export class Poke {
     // 体全体も押された向きへ（地面へ押し込まないよう水平だけ）
     const shove = this.velocity.clone().setY(0).multiplyScalar(slap ? SLAP_SHOVE : SHOVE);
     y.body.addVelocity(shove.x, 0, shove.z);
+    if (dead) return;
     this.hits += slap ? SLAP_HITS : 1;
     y.stress.add(slap ? y.stress.params.slap : y.stress.params.poke);
     if (slap) y.forage.spill(); // 叩かれると帽子のつばの餌は落ちる
