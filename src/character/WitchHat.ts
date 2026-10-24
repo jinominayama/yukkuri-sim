@@ -76,6 +76,11 @@ export class WitchHat implements Accessory {
    * 外している間は頭を避けて太らせるのをやめ、元の形に戻す（地面で折り曲げるのはそのまま）
    */
   carry: THREE.Matrix4 | null = null;
+  /**
+   * かぶったまま押しのける回転（ワールドの行列。かぶった置き場の左から掛ける）。null なら押しのけない。
+   * 箱に顔を押し付けたとき、つばが箱に当たって帽子が後ろへ傾くのに使う
+   */
+  nudge: THREE.Matrix4 | null = null;
   /** 頭にかぶっているときの置き場（外している間も毎回求める。carry を決めるのに使う） */
   readonly worn = new THREE.Matrix4();
   /** 外して元の形に戻してある */
@@ -600,6 +605,16 @@ export class WitchHat implements Accessory {
     up.set(e[4], e[5], e[6]).normalize();
   }
 
+  /** 押しのける回転を変えて、すぐ置き場に反映する（update の後で、今のかぶった置き場に合わせて決めたいとき） */
+  setNudge(m: THREE.Matrix4 | null): void {
+    this.nudge = m;
+    if (this.carry) return;
+    if (m) this.object.matrix.multiplyMatrices(m, this.worn);
+    else this.object.matrix.copy(this.worn);
+    this.object.matrixWorldNeedsUpdate = true;
+    this.inverse.copy(this.object.matrix).invert();
+  }
+
   /** brimSpot の点の、帽子の座標での位置 */
   brimLocal(angle: number, rFrac: number, out: THREE.Vector3): THREE.Vector3 {
     const r = CROWN_FOOT + (this.brimR - CROWN_FOOT) * rFrac;
@@ -656,7 +671,9 @@ export class WitchHat implements Accessory {
     const cur = frameOf(p[0], p[1], p[2], p[3]);
     this.worn.copy(cur).multiply(this.restInv).multiply(this.local)
       .multiply(new THREE.Matrix4().makeTranslation(0, this.lift, 0));
-    this.object.matrix.copy(this.carry ?? this.worn);
+    if (this.carry) this.object.matrix.copy(this.carry);
+    else if (this.nudge) this.object.matrix.multiplyMatrices(this.nudge, this.worn);
+    else this.object.matrix.copy(this.worn);
     this.object.matrixWorldNeedsUpdate = true;
     this.inverse.copy(this.object.matrix).invert();
     if (this.dome) this.dome.visible = this.carry !== null;

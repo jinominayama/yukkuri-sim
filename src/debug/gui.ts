@@ -219,6 +219,12 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(moruTune.add(y.moru.params, 'contactSoft', 0.01, 1, 0.01).name('這うときの接地面の硬さ(倍)').onChange(moruContact));
   noLock(moruTune.add(y.moru.params, 'press', 0, 20, 0.5).name('這うときの押し付け').onChange(moruContact));
 
+  // 段ボール箱：ボタンで体の前に出し、体ごと押して運ぶ（障害物）
+  const box = doGroup.addFolder('箱');
+  box.add({ f: () => y.box.spawn() }, 'f').name('箱を出す');
+  box.add({ f: () => y.box.push() }, 'f').name('押す');
+  box.add({ f: () => y.box.clear() }, 'f').name('片付ける');
+
   // 枝：ボタンで地面に出し、三つ編みで持つ（今は持つだけ）
   const branch = doGroup.addFolder('枝');
   branch.add({ f: () => y.branch.spawn() }, 'f').name('枝を出す');

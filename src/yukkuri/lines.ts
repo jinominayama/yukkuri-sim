@@ -17,7 +17,8 @@ export type LineKey =
   | 'doze' | 'snore' | 'wake' | 'faint' | 'comeTo'
   | 'branchGo' | 'branchLower' | 'branchPick' | 'branchDrop' | 'branchThreat'
   | 'forageGo' | 'forageLower' | 'forageOnHat' | 'forageFull' | 'forageBusy' | 'forageSpill'
-  | 'stashStart' | 'stashIn' | 'stashDone' | 'stashFull' | 'stashNone';
+  | 'stashStart' | 'stashIn' | 'stashDone' | 'stashFull' | 'stashNone'
+  | 'boxGo' | 'boxPush' | 'boxDone' | 'boxBump';
 
 type Lines = Record<LineKey, string[]>;
 
@@ -71,6 +72,10 @@ const COMMON: Lines = {
   stashDone: ['ゆっくりしまったよ！', 'これでたくわえはばっちりだよ！', 'ゆっへん！', 'おぼうしさん、ゆっくりおかえり！'],
   stashFull: ['もうはいらないよ！', 'おぼうしのなかがいっぱいだよ！', 'ゆぅ…ぱんぱんだよ…'],
   stashNone: ['しまうごはんさんがないよ？', 'つばにはなにものってないよ？'],
+  boxGo: ['はこさんをうごかすよ！', 'ゆっくりおすよ！', 'まかせてね！'],
+  boxPush: ['ゆっ…ゆっ…', 'うんしょ…うんしょ…', 'ゆぎぎ…', 'おもいよ…', 'ゆ～ん…しょっ…', 'がんばるよ…！'],
+  boxDone: ['ふぅ…ゆっくりうごいたよ！', 'ゆっへん！', 'やったよ！', 'ゆぅ…つかれたよ…'],
+  boxBump: ['ゆっ！？はこさんがあるよ…', 'とおれないよ…', 'ゆぅ…じゃまだよ…'],
 };
 
 /** 魔理沙の「のぜ」口調（〜なのぜ・〜だぜ）。叫び・泣き声など口調の出ないものは共通と同じ */
@@ -121,6 +126,10 @@ const MARISA_NOZE: Partial<Lines> = {
   stashDone: ['しまったのぜ！', 'これでふゆごもりもばっちりなのぜ！', 'ゆっへん！', 'まりさのおぼうしはべんりなのぜ！'],
   stashFull: ['もうはいらないのぜ！', 'おぼうしのなかがいっぱいなのぜ！', 'ゆぅ…ぱんぱんなのぜ…'],
   stashNone: ['しまうごはんさんがないのぜ？', 'つばにはなにものってないのぜ？'],
+  boxGo: ['はこさんをうごかすのぜ！', 'まりさにまかせるのぜ！', 'おすのぜ！'],
+  boxPush: ['ゆっ…ゆっ…', 'うんしょ…なのぜ…', 'ゆぎぎ…', 'おもいのぜ…', 'まりさはまけないのぜ…！', 'もうちょっとなのぜ…'],
+  boxDone: ['ふぅ…うごいたのぜ！', 'ゆっへん！', 'まりさのちからをみたか、なのぜ！', 'ゆぅ…つかれたのぜ…'],
+  boxBump: ['ゆっ！？はこさんがじゃまなのぜ…', 'とおれないのぜ…', 'ゆぅ…どくのぜ…'],
 };
 
 export interface VoiceDef {

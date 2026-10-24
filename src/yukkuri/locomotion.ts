@@ -238,9 +238,13 @@ export class Locomotion {
    * 立って止まっている間の身ぶりの指令（体操など）。null でいつもの立ち姿。
    *   orientation … 体の姿勢（向き・傾き）。squash … 縦の伸び（1 = そのまま、>1 で伸びる）
    *   arch … 背骨を縦に曲げる角度（rad。+ で後ろ、- で前を持ち上げる。省くと 0）
+   *   bend … 上部（頭）を前へずらす量（底は地面に付けたまま。体の高さに対する比。省くと 0）
+   *   bendSide … 上部を横（ローカル +X 側。- で -X 側）へずらす量（同。省くと 0）
+   *   stretch … 前後の伸び（1 = そのまま。省くと 1）
+   *   pin … 底を地面から離さない（物を押すときなど）
    * 移動中・寝転がっている間は使わない。身ぶりの間は転倒とみなして起き直さない
    */
-  gesture: { orientation: Quaternion; squash: number; arch?: number } | null = null;
+  gesture: { orientation: Quaternion; squash: number; arch?: number; bend?: number; bendSide?: number; stretch?: number; pin?: boolean } | null = null;
   /**
    * もるんもるん：立って止まっている間、お尻を突き上げて左右に振る。移動するときも、そのままもるんもるんで這う
    * （移動方法が mode = 'moru' のときは、移動している間だけもるんもるんになる）
@@ -708,6 +712,9 @@ export class Locomotion {
     let sideGoal = 0;
     let archGoal = 0;
     act.slideFriction = null;
+    act.fitGoal = false;
+    act.bendSide = 0;
+    act.pinBottom = false;
     act.anchor = null;
     act.pivot = null;
     act.uprightMin = null;
@@ -852,8 +859,14 @@ export class Locomotion {
           act.uprightMin = GESTURE_POSTURE;
           squashGoal = this.gesture.squash;
           archGoal = this.gesture.arch ?? 0;
+          bendGoal = this.gesture.bend ?? 0;
+          stretchGoal = this.gesture.stretch ?? 1;
           // 大きく曲げるときは、やわらかい体型でも曲げた形を保てるように形に戻る強さを上げる
-          if (archGoal !== 0) act.stiffnessMin = GESTURE_STIFFNESS;
+          if (archGoal !== 0 || bendGoal !== 0 || this.gesture.bendSide) act.stiffnessMin = GESTURE_STIFFNESS;
+          // 上部を前へずらしたまま立つ：体の回転を曲げた形と比べて求める（静止形状と比べると前へ傾いたと読まれ、体ごと倒れる）
+          act.bendSide = this.gesture.bendSide ?? 0;
+          if (bendGoal !== 0 || act.bendSide !== 0) act.fitGoal = true;
+          if (this.gesture.pin) act.pinBottom = true;
           rate = 6;
         } else if (this.moru) {
           // その場でもるんもるん：頭の先を支点にして、お尻を左右に振る

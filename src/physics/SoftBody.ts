@@ -6,6 +6,21 @@ import { Quaternion, Vector3 } from 'three';
  *
  * 描画には依存しない（three からは数学クラスのみ使用）。
  */
+/** 底を地面に留めるとき、留める頂点の高さの範囲（静止形状の高さに対する比） */
+const PIN_BOTTOM = 0.03;
+
+/** 地面に置いた箱（当たる物）。底は地面。中心 (x, z)・向き yaw（Y 軸まわり）・半分の横幅 hx（ローカル x）・半分の奥行き hz（ローカル z）・高さ h */
+export interface BoxCollider {
+  x: number;
+  z: number;
+  yaw: number;
+  hx: number;
+  hz: number;
+  h: number;
+  /** 直近ステップで当たっていた頂点の数 */
+  contacts: number;
+}
+
 export interface SoftBodyParams {
   /** 重力加速度 (m/s²) */
   gravity: number;
@@ -98,6 +113,8 @@ export class SoftBody {
   private lv: Float32Array = new Float32Array(0);
   /** 直近ステップで地面に触れていた頂点の数 */
   groundContacts = 0;
+  /** 地面に置いた箱（体はすり抜けない。箱の外へ押し出す） */
+  readonly boxes: BoxCollider[] = [];
 
   /**
    * 体の「筋肉」による入力。シェイプマッチングの目標形状を変えることで体を動かす。
@@ -113,6 +130,8 @@ export class SoftBody {
      * （体全体を回す lean と違い、底は地面に付いたまま）。値は体の高さに対する頭頂の前方移動の比
      */
     bend: 0,
+    /** bend の横向き：上部をローカル +X 側へずらす量（- で -X 側）。底は地面に付けたまま。値は体の高さに対する頭頂の横移動の比 */
+    bendSide: 0,
     /**
      * 横への曲げ（rad）。体の前後の軸（背骨）を弧状に曲げ、各断面を背骨の向きに合わせて回す。
      * 尻尾側はまっすぐのまま胴の中ほどで曲がり、頭の部分は丸ごとこの角度だけ横（+ でローカル +X 側）を向く。
@@ -148,6 +167,14 @@ export class SoftBody {
     arch: 0,
     /** 前方への傾き (rad)。前方は体のローカル +Z */
     lean: 0,
+    /**
+     * 体の今の回転を、静止形状でなく目標形状（actuation を反映した形）と比べて求める。
+     * 上部を前へずらす（bend）など形を大きく変えたまま立っているとき、静止形状と比べると「体ごと前へ傾いた」と読まれ、
+     * 起こす力と曲げる力が重なって体全体が倒れる（底が浮く）。false でいつもどおり
+     */
+    fitGoal: false,
+    /** 底（静止形状の高さの下から PIN_BOTTOM まで）の頂点を地面から離さない（物を押すときなど。底を浮かせてはいけない動き） */
+    pinBottom: false,
     /** 向きたい方向 (rad, Y軸まわり)。null なら今の向きを保つ */
     yaw: null as number | null,
     /** 前方にだけ滑りやすくする底の摩擦（null で通常の摩擦） */
@@ -313,6 +340,18 @@ export class SoftBody {
     this.center.set(x, y, z);
   }
 
+  /** 体ごと水平にずらす（速さは変えない。物を押して一緒に進むときなど） */
+  translate(dx: number, dz: number): void {
+    for (let i = 0; i < this.n * 3; i += 3) {
+      this.pos[i] += dx;
+      this.pos[i + 2] += dz;
+      this.prev[i] += dx;
+      this.prev[i + 2] += dz;
+    }
+    this.center.x += dx;
+    this.center.z += dz;
+  }
+
   /** 全体の平均速度 */
   meanVelocity(out: Vector3): Vector3 {
     out.set(0, 0, 0);
@@ -403,6 +442,7 @@ export class SoftBody {
       this.solveVolume(p.volumeCompliance / (h * h));
       this.solveShapeMatching(shapeK, uprightK, kv);
       this.solveGround(p.friction);
+      if (this.boxes.length > 0) this.solveBoxes();
 
       // 速度を更新する。元の形に戻る動き（シェイプマッチングの補正）は、
       // 弾みの割合だけを速度に残す（残りは位置だけを戻し、跳ね返りの勢いにしない）
@@ -523,6 +563,7 @@ export class SoftBody {
     const y0 = this.restYMin;
     const H = Math.max(this.restYMax - y0, 1e-6);
     const bend = act.bend;
+    const bendSide = act.bendSide;
     const side = act.sideBend;
     const tail = act.tailSway;
     const arch = act.arch;
@@ -550,8 +591,8 @@ export class SoftBody {
         rz *= kz;
         ry = y0 + (ry - y0) * (1 + inflate * INFLATE_UP);
       }
-      g[i] = rx * sx;
-      g[i + 1] = ry * sy - bend * 0.45 * H * sy * t2;
+      g[i] = rx * sx + bendSide * H * t2;
+      g[i + 1] = ry * sy - (bend + Math.abs(bendSide)) * 0.45 * H * sy * t2;
       g[i + 2] = rz * sz + bend * H * t2;
       gzMin = Math.min(gzMin, g[i + 2]);
       gzMax = Math.max(gzMax, g[i + 2]);
@@ -680,7 +721,7 @@ export class SoftBody {
     }
     // 何も変形していなければ、皮の基準の長さは静止形状のまま（お尻の玉も変形に数える。数え忘れると、お尻を左右に振って
     // 真ん中を通る瞬間だけ皮が元の形に引っ張られ、カクッと動いた）
-    const identity = Math.abs(sy - 1) + Math.abs(st - 1) + Math.abs(bend) + Math.abs(side) + Math.abs(tail) + Math.abs(arch)
+    const identity = Math.abs(sy - 1) + Math.abs(st - 1) + Math.abs(bend) + Math.abs(bendSide) + Math.abs(side) + Math.abs(tail) + Math.abs(arch)
       + (dd ? dome : 0) + inflate < 1e-4;
     if (identity) {
       edgeTarget.set(edgeLen);
@@ -772,7 +813,8 @@ export class SoftBody {
 
   /** kv：頂点ごとの形に戻る強さ（null なら全体で k） */
   private solveShapeMatching(k: number, uprightK: number, kv: Float32Array | null = null): void {
-    const { pos, rest, n } = this;
+    const { pos, n } = this;
+    const rest = this.actuation.fitGoal ? this.goalLocal : this.rest;
     const c = centroid(pos, this.center);
 
     // A = Σ (x - c) q^T を列ベクトル a0,a1,a2 として持つ
@@ -900,7 +942,10 @@ export class SoftBody {
     let contacts = 0;
     for (let i = 0; i < n; i++) {
       const k = 3 * i;
-      if (pos[k + 1] >= 0) continue;
+      if (pos[k + 1] >= 0) {
+        // 底を地面に留める：浮いた底の頂点を地面へ戻す（接地として摩擦も掛ける）
+        if (!this.actuation.pinBottom || this.rest[k + 1] > this.restYMin + (this.restYMax - this.restYMin) * PIN_BOTTOM) continue;
+      }
       pos[k + 1] = 0;
       // 接地中は水平方向の移動を摩擦で減らす
       const dx = pos[k] - prev[k], dz = pos[k + 2] - prev[k + 2];
@@ -935,6 +980,36 @@ export class SoftBody {
       contacts++;
     }
     this.groundContacts = contacts;
+  }
+
+  /**
+   * 箱の中に入った頂点を、横 4 面のうち浅い面から外へ押し出す。上の面には乗せない（体は箱より背が高いので、押し付けると
+   * はみ出した頭が上の面に支えられて持ち上がり、そのまま箱に乗り上げた）
+   */
+  private solveBoxes(): void {
+    const { pos, n } = this;
+    for (const b of this.boxes) {
+      const cs = Math.cos(b.yaw), sn = Math.sin(b.yaw);
+      let contacts = 0;
+      for (let i = 0; i < n; i++) {
+        const k = 3 * i;
+        const y = pos[k + 1];
+        if (y >= b.h) continue;
+        const dx = pos[k] - b.x, dz = pos[k + 2] - b.z;
+        // 箱のローカル：x = 横、z = 奥行き（yaw だけ回した向き）
+        const lx = dx * cs - dz * sn, lz = dx * sn + dz * cs;
+        const px = b.hx - Math.abs(lx), pz = b.hz - Math.abs(lz);
+        if (px <= 0 || pz <= 0) continue;
+        let ox = 0, oz = 0;
+        if (px < pz) ox = Math.sign(lx) * px;
+        else oz = Math.sign(lz) * pz;
+        // ローカル → ワールド
+        pos[k] += ox * cs + oz * sn;
+        pos[k + 2] += -ox * sn + oz * cs;
+        contacts++;
+      }
+      b.contacts = contacts;
+    }
   }
 
   /** 今の向き (rad, Y軸まわり。ローカル +Z が前) */
