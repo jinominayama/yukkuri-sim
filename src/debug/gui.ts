@@ -4,6 +4,7 @@ import { DEFAULT_LIFE, type Yukkuri } from '../yukkuri/Yukkuri';
 import { DEFAULT_SKIN } from '../render/toonMaterial';
 import { MIN_HOP_HEIGHT } from '../yukkuri/locomotion';
 import { LockManager } from './locks';
+import { loadJSON, saveJSON } from '../platform/storage';
 import { STYLES } from '../face/styles';
 import { createFacePanel } from './facePanel';
 import { CHARACTERS } from '../character';
@@ -145,22 +146,27 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   const status = { state: '' };
   doGroup.add(status, 'state').name('今の状態').disable().listen();
   setInterval(() => (status.state = y.locomotion.stateLabel), 100);
+  // 種類ごとにまとめる（項目が多くパネルが長くなったので）。初めは閉じておく
+  const basic = doGroup.addFolder('基本');
+  const living = doGroup.addFolder('暮らし');
+  const gesture = doGroup.addFolder('しぐさ');
+  const tools = doGroup.addFolder('道具');
 
-  const act = doGroup.addFolder('動き');
+  const act = basic.addFolder('動き');
   act.add({ f: () => y.locomotion.stop() }, 'f').name('止まる');
   act.add({ f: () => y.drop(1.0) }, 'f').name('高さ1mから落とす');
   act.add({ f: () => y.drop(0.02) }, 'f').name('その場に置き直す');
   act.add({ f: () => y.impulse(0, 3.2, 0) }, 'f').name('真上に跳ねさせる');
   act.add({ f: () => y.impulse(1.2, 2.6, 0) }, 'f').name('横に跳ねさせる');
 
-  const pose = doGroup.addFolder('体勢');
+  const pose = basic.addFolder('体勢');
   pose.add({ f: () => y.locomotion.lieDown('prone') }, 'f').name('腹ばいになる');
   pose.add({ f: () => y.locomotion.lieDown('supine') }, 'f').name('仰向けになる');
   pose.add({ f: () => y.getUp() }, 'f').name('起き上がる');
 
   // 眠る（立ったまま柔らかくなって眠る。つつく等で起きる）・気絶（どの姿勢でもその場で柔らかくなり、しばらくすると気がつく）
   // あいさつ：動作の前の宣言（切り替え）と、挨拶のボタン
-  const greet = doGroup.addFolder('あいさつ');
+  const greet = living.addFolder('あいさつ');
   noLock(greet.add(y.greet, 'declareFirst').name('動作の前に宣言する').onChange(() => y.greet.save()));
   greet.add({ f: () => y.greet.say('greetYukkuri') }, 'f').name('ゆっくりしていってね！');
   // おたべなさい：言ってから、帽子を脱いで横に置き、二つに割れる（戻すのはページの読み直し）
@@ -171,17 +177,17 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   /** 宣言してから始める動作（食べる・うんうん・たいそう・眠る）を、今始められるか（ほかの動作の途中・気絶中は始めない。眠っていれば宣言で起こす） */
   const canAct = () => !(y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.rest.fainting);
 
-  const rest = doGroup.addFolder('眠る・気絶');
+  const rest = basic.addFolder('眠る・気絶');
   // 眠るときは宣言してから（起こすときは宣言しない）
   rest.add({ f: () => (y.rest.sleeping ? y.rest.toggleSleep() : y.greet.declare('declareSleep', canAct, () => y.rest.sleep())) }, 'f').name('眠る／起こす');
   rest.add({ f: () => y.rest.faint() }, 'f').name('気絶させる');
 
   // ごはん：食べ物を目の前に置くと、見つめる → むーしゃむーしゃ → しあわせー の順に食べる
-  const meal = doGroup.addFolder('ごはん');
+  const meal = living.addFolder('ごはん');
   meal.add({ f: () => y.greet.declare('declareMeal', canAct, () => y.feeding.start()) }, 'f').name('食べ物をあげる');
 
   // うんうん：体の後ろから餡子を絞り出す。出したものは「片付ける」まで残る
-  const poo = doGroup.addFolder('うんうん');
+  const poo = living.addFolder('うんうん');
   poo.add({ f: () => y.greet.declare('declarePoo', canAct, () => y.dropping.start()) }, 'f').name('うんうんする');
   // うんうんたいそう：歌に合わせて揺れる・伸びる・ひねる・反ってから、うんうんを出す。
   // 最後に出すときの体勢（デバッグ用）：ランダム・仰向け（後ろへ反る）・腹ばい（お尻を突き上げる）
@@ -194,14 +200,14 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   poo.add({ f: () => y.dropping.clear() }, 'f').name('片付ける');
 
   // 吐餡：口から餡子を吐く（高い所から落ちたときも吐く）。吐いたものは「片付ける」まで残る
-  const vomit = doGroup.addFolder('吐餡');
+  const vomit = living.addFolder('吐餡');
   const saveVomit = () => y.vomit.save();
   vomit.add({ f: () => y.vomit.start() }, 'f').name('吐餡する');
   noLock(vomit.add(y.vomit.params, 'face', { ランダム: 'random', 白目: 'shock', 泣く: 'cry' }).name('顔').onChange(saveVomit));
   vomit.add({ f: () => y.vomit.clear() }, 'f').name('片付ける');
 
   // ストレス：つつく・叩く・汚れの近くでたまり、上限で吐餡する（吐くと半分）。今の値を見る・いちばん低くする（下限のある体型は下限まで）
-  const stressDo = doGroup.addFolder('ストレス');
+  const stressDo = basic.addFolder('ストレス');
   const stressView = { value: '' };
   stressDo.add(stressView, 'value').name('今のストレス').disable().listen();
   setInterval(() => {
@@ -211,7 +217,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   stressDo.add({ f: () => y.stress.reset() }, 'f').name('いちばん低くする');
 
   // もるんもるん：お尻を突き上げて左右に振る。振っている間に地面をクリックすると、そのまま這って行く
-  const moru = doGroup.addFolder('もるんもるん');
+  const moru = gesture.addFolder('もるんもるん');
   moru.add({ f: () => y.moru.toggle() }, 'f').name('振る／やめる');
   noLock(moru.add(y.moru.params, 'face', { ランダム: 'random', ご機嫌: 'happy', 必死: 'desperate', 泣く: 'cry' }).name('顔')
     .onChange(() => { y.moru.save(); y.moru.refreshFace(); }));
@@ -234,13 +240,13 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(moruTune.add(y.moru.params, 'press', 0, 20, 0.5).name('這うときの押し付け').onChange(moruContact));
 
   // 段ボール箱：ボタンで体の前に出し、体ごと押して運ぶ（障害物）
-  const box = doGroup.addFolder('箱');
+  const box = tools.addFolder('箱');
   box.add({ f: () => y.box.spawn() }, 'f').name('箱を出す');
   box.add({ f: () => y.box.push() }, 'f').name('押す');
   box.add({ f: () => y.box.clear() }, 'f').name('片付ける');
 
   // 枝：ボタンで地面に出し、三つ編みで持つ（今は持つだけ）
-  const branch = doGroup.addFolder('枝');
+  const branch = tools.addFolder('枝');
   branch.add({ f: () => y.branch.spawn() }, 'f').name('枝を出す');
   branch.add({ f: () => y.branch.toggleHold() }, 'f').name('持つ／離す');
   branch.add({ f: () => y.branch.toggleThreat() }, 'f').name('威嚇する／やめる');
@@ -249,7 +255,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   branch.add({ f: () => y.branch.clear() }, 'f').name('片付ける');
 
   // 餌集め：小さな餌を 1 個ずつ出し、三つ編みで拾って帽子のつばに乗せる
-  const forage = doGroup.addFolder('餌集め');
+  const forage = tools.addFolder('餌集め');
   noLock(forage.add(y.forage, 'kindId', { ランダム: 'random', 木の実: 'acorn', 草: 'grass', 虫: 'bug' }).name('出す餌'));
   noLock(forage.add(y.forage, 'pickMode', { つばに乗せる: 'brim', 帽子に直接入れる: 'hat' }).name('拾い方'));
   forage.add({ f: () => y.forage.spawn() }, 'f').name('餌を出す');
@@ -263,7 +269,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   setInterval(() => (forageView.count = `つば ${y.forage.onHat} / 8・中 ${y.forage.inHat} / ${STASH_MAX}（地面 ${y.forage.onGround}）`), 200);
 
   // ぷくー：体をふくらませて威嚇する（ボタンで始める。もう一度押すとしぼむ）
-  const puku = doGroup.addFolder('ぷくー');
+  const puku = gesture.addFolder('ぷくー');
   puku.add({ f: () => y.puku.toggle() }, 'f').name('ぷくーする／やめる');
   noLock(puku.add(y.puku.params, 'face', { ランダム: 'random', ぎゅっ: 'squeeze', にらむ: 'glare', すまし: 'calm' }).name('顔')
     .onChange(() => { y.puku.save(); y.puku.refreshFace(); }));
@@ -275,7 +281,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(pukuTune.add(y.puku.params, 'wide', 0, 1.5, 0.01).name('下ぶくれ具合').onChange(() => y.puku.setFit()));
 
   // ぺにぺに：出し入れはよく使うので「させる」に置く（形の設定は「見た目」→「ぺにぺに」）。体型ごとに保存する
-  const peniDo = doGroup.addFolder('ぺにぺに');
+  const peniDo = gesture.addFolder('ぺにぺに');
   noLock(peniDo.add(y.peni.params, 'show').name('出す').onChange(() => y.peni.save()));
 
   // ---- 見た目 ----
@@ -475,12 +481,37 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   screen.add(view, 'freeCamera').name('カメラの角度制限を解除');
 
   // 最初に開いておくのは、よく使う「体型プリセット」と「させる」だけ（ほかの大見出しは、開いたときに小見出しが閉じて並ぶ）
-  for (const f of [looks, tune, screen]) f.close();
+  for (const f of [looks, tune, screen, basic, living, gesture, tools]) f.close();
   for (const f of [...looks.folders, ...tune.folders]) f.close();
+  // 開いた・閉じた状態は保存して、次に開いたときも残す
+  rememberFolders(gui);
 
   // 各項目と各見出しにロックボタンを付ける（全項目を作り終えてから）
   locks = new LockManager(gui);
   return gui;
+}
+
+/**
+ * 見出しの開いた・閉じた状態を保存し、前に保存した状態に戻す（見出しの名前を上からたどった道筋で覚える）。
+ * 保存していない見出しは、作ったときの状態のまま
+ */
+function rememberFolders(gui: GUI): void {
+  const KEY = 'guiFolders';
+  const pathOf = (f: GUI): string => {
+    const names: string[] = [];
+    for (let g: GUI | undefined = f; g && g.parent; g = g.parent) names.unshift(g._title);
+    return names.join('/');
+  };
+  const saved = loadJSON<Record<string, boolean>>(KEY) ?? {};
+  for (const f of gui.foldersRecursive()) {
+    const open = saved[pathOf(f)];
+    if (open !== undefined) f.open(open);
+  }
+  gui.onOpenClose((changed: GUI) => {
+    if (changed === gui) return;
+    saved[pathOf(changed)] = !changed._closed;
+    saveJSON(KEY, saved);
+  });
 }
 
 /** 選んだ体型の名前と説明を画面左上に表示する */
