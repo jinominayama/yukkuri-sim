@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { loadJSON, saveJSON } from '../platform/storage';
 import type { LineKey } from './lines';
-import type { Word } from './fx';
+import { bodyFacing, faceFrame, showFace, type Word } from './fx';
+import { smooth } from './braidPick';
+import type { PartSelection } from '../face/parts';
 import type { Yukkuri } from './Yukkuri';
 
 /**
@@ -10,6 +12,7 @@ import type { Yukkuri } from './Yukkuri';
  *                     宣言する／しないは切り替えられる（declareFirst。保存する）。宣言の間はその場で止まって待つ
  *   挨拶 … 「ゆっくりしていってね！」などをボタンで言う（セリフだけ）。「ここを{種族名}のゆっくりぷれいすにするよ！」の種族名は
  *          キャラクターの呼び名（CharacterDef.kana。なければ「ゆっくり」）
+ *   おうちせんげん（proud）… 言いながらその場で軽く一度跳ね、着地したら少し体を反らして胸を張り、正面の上を見上げる（にっこり）
  */
 const STORAGE_KEY = 'greet';
 /** 宣言してから動作を始めるまで（秒） */
@@ -25,6 +28,18 @@ const BIG_LIFE = 2;
  */
 const RAISE = 0.45;
 const RAISE_PER = 1.93;
+/**
+ * おうちせんげん：跳ねる上向きの速さ（m/s）。胸を張る（後ろへ反らす角度 rad・縦の伸び）間の長さ（秒。寄せる・戻す時間を含む）。
+ * 見上げる所（顔から、前へ・上へ 胴の半径の何倍か。正面の上）
+ */
+const PROUD_HOP = 1.6;
+const PROUD_LEAN = 0.16;
+const PROUD_STRETCH = 1.05;
+const PROUD_TIME = 2.6;
+const PROUD_IN = 0.35;
+const PROUD_OUT = 0.45;
+const PROUD_LOOK = [2.0, 2.4];
+const FACE_PROUD: Partial<PartSelection> = { eyes: 'normal', brows: 'neutral', mouth: 'smile' };
 
 export class Greet {
   /** 動作の前に宣言する */
@@ -34,6 +49,14 @@ export class Greet {
   /** 「ゆっくりしていってね！」の文字の大きさ（ふつうの文字に対する倍。保存する） */
   bigSize = 3;
   private pending: { then: () => void; t: number } | null = null;
+  /** おうちせんげんの途中（跳ねて着地を待つ・胸を張る） */
+  private proud: {
+    phase: 'hop' | 'pose'; t: number; heading: number; face: Partial<PartSelection> | null;
+    /** 跳ねる前の重心の高さと、跳ねている間の一番高い所 */
+    y0: number; top: number;
+  } | null = null;
+  private readonly pose = new THREE.Quaternion();
+  private readonly euler = new THREE.Euler(0, 0, 0, 'YXZ');
   private word: Word | null = null;
 
   constructor(private readonly y: Yukkuri) {
@@ -43,9 +66,25 @@ export class Greet {
     if (typeof saved?.bigSize === 'number') this.bigSize = saved.bigSize;
   }
 
-  /** 宣言して、言い終えるのを待っている途中か */
+  /** 宣言して言い終えるのを待っている途中か、おうちせんげんの途中か */
   get busy(): boolean {
-    return this.pending !== null;
+    return this.pending !== null || this.proud !== null;
+  }
+
+  /**
+   * おうちせんげん：「ここを○○のゆっくりぷれいすにするよ！」と言い、その場で軽く跳ねて、着地したら胸を張って斜め上を見上げる。
+   * 始められないとき（can が false・ほかのあいさつの途中・気絶中・寝転がっている）は何もしない
+   */
+  declareHome(can: () => boolean): boolean {
+    const y = this.y;
+    if (this.busy || y.rest.fainting || y.death.active || y.otabe.active || y.locomotion.isLying || !can()) return false;
+    y.rest.wake(true);
+    y.locomotion.stop();
+    y.locomotion.hold();
+    this.say('greetPlace');
+    y.impulse(0, PROUD_HOP, 0);
+    this.proud = { phase: 'hop', t: 0, heading: y.body.yaw, face: null, y0: y.center.y, top: y.center.y };
+    return true;
   }
 
   save(): void {
@@ -57,7 +96,7 @@ export class Greet {
    */
   declare(key: LineKey, can: () => boolean, then: () => void): boolean {
     const y = this.y;
-    if (this.pending || y.rest.fainting || y.death.active || y.otabe.active || !can()) return false;
+    if (this.busy || y.rest.fainting || y.death.active || y.otabe.active || !can()) return false;
     if (!this.declareFirst) {
       then();
       return true;
@@ -87,6 +126,7 @@ export class Greet {
 
   /** 固定時間刻みで呼ぶ */
   update(dt: number): void {
+    if (this.proud) this.updateProud(dt);
     const p = this.pending;
     if (!p) return;
     const y = this.y;
@@ -101,5 +141,49 @@ export class Greet {
     this.pending = null;
     y.locomotion.release();
     p.then();
+  }
+
+  private updateProud(dt: number): void {
+    const y = this.y;
+    const pr = this.proud!;
+    const loco = y.locomotion;
+    pr.t += dt;
+    if (y.rest.fainting || loco.isLying) {
+      this.endProud();
+      return;
+    }
+    if (pr.phase === 'hop') {
+      // 跳ね上がって、跳ねる前の高さまで下りてきたら（着地したら）胸を張る
+      pr.top = Math.max(pr.top, y.center.y);
+      const landed = pr.top > pr.y0 + y.shape.radius * 0.05 && y.center.y <= pr.y0 + y.shape.radius * 0.02 && y.body.groundContacts > 0;
+      if ((landed && loco.idle) || pr.t > 2) {
+        pr.phase = 'pose';
+        pr.t = 0;
+        showFace(y, FACE_PROUD);
+        pr.face = y.face.override;
+      }
+      return;
+    }
+    // 胸を張る：少し後ろへ反らして縦に伸び、斜め上を見上げる。始めと終わりはなめらかに
+    const k = Math.min(smooth(pr.t / PROUD_IN), 1 - smooth((pr.t - (PROUD_TIME - PROUD_OUT)) / PROUD_OUT));
+    this.euler.set(-PROUD_LEAN * k, pr.heading, 0);
+    this.pose.setFromEuler(this.euler);
+    loco.gesture = { orientation: this.pose, squash: 1 + (PROUD_STRETCH - 1) * k };
+    const R = y.shape.radius;
+    const f = bodyFacing(y);
+    const head = faceFrame(y, 0, 0).pos;
+    if (k > 0.05) y.lookAt(head.addScaledVector(f, R * PROUD_LOOK[0]).add(new THREE.Vector3(0, R * PROUD_LOOK[1], 0)));
+    else y.lookAt(null);
+    if (pr.t >= PROUD_TIME) this.endProud();
+  }
+
+  private endProud(): void {
+    const y = this.y;
+    const pr = this.proud!;
+    if (y.locomotion.gesture?.orientation === this.pose) y.locomotion.gesture = null;
+    if (pr.face && y.face.override === pr.face) y.face.override = null;
+    y.lookAt(null);
+    y.locomotion.release();
+    this.proud = null;
   }
 }

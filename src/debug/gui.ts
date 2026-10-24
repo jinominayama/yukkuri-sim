@@ -175,8 +175,8 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   greet.add({ f: () => { if (!y.otabe.active && !y.death.active && !y.rest.fainting) { y.greet.say('greetEatMe'); y.otabe.start(); } } }, 'f').name('おたべなさい！');
   // 死ぬ：言ってから、震えながら柔らかく黒ずんで止まる（戻すのはページの読み直し）
   greet.add({ f: () => { if (!y.death.active && !y.rest.fainting) { y.greet.say('greetLast'); y.death.start(); } } }, 'f').name('もっとゆっくりしたかったよ…');
-  // おうちせんげん：「ここを○○のゆっくりぷれいすにするよ！」と言う（ボタンの名前だけ短く）
-  greet.add({ f: () => y.greet.say('greetPlace') }, 'f').name('おうちせんげん');
+  // おうちせんげん：「ここを○○のゆっくりぷれいすにするよ！」と言い、軽く跳ねて胸を張り、正面の上を見上げる（ボタンの名前だけ短く）
+  greet.add({ f: () => y.greet.declareHome(canAct) }, 'f').name('おうちせんげん');
   /** 宣言してから始める動作（食べる・うんうん・たいそう・眠る）を、今始められるか（ほかの動作の途中・気絶中は始めない。眠っていれば宣言で起こす） */
   const canAct = () => !(y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.rest.fainting);
 
