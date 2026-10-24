@@ -92,6 +92,8 @@ export class WitchHat implements Accessory {
   crush = 0;
   /** 円錐の形に使ったつぶす割合 */
   private crushUsed = 0;
+  /** 外している間、裏地のおわんを出して円錐と帯の輪郭線を隠すか（逆さに置くとき。かぶる向きのまま置くときは false） */
+  lined = true;
   /** 円錐と帯の輪郭線（外している間は隠す） */
   private readonly crownLines: THREE.Object3D[] = [];
   /** 裏地のおわん（外している間だけ出す） */
@@ -676,10 +678,10 @@ export class WitchHat implements Accessory {
     else this.object.matrix.copy(this.worn);
     this.object.matrixWorldNeedsUpdate = true;
     this.inverse.copy(this.object.matrix).invert();
-    if (this.dome) this.dome.visible = this.carry !== null;
+    if (this.dome) this.dome.visible = this.carry !== null && this.lined;
     // 外している間は円錐と帯の輪郭線を描かない（逆さに置くと、口の真ん中に輪郭線の色の穴が見える角度があった。
     // 輪郭線は面の裏を描くので、口の側から見える円錐の内側に出る）
-    for (const line of this.crownLines) line.visible = this.carry === null;
+    for (const line of this.crownLines) line.visible = this.carry === null || !this.lined;
     if (this.carry && !this.relaxed) {
       // 外した：頭に合わせて太らせた円錐・広げたフリルを元の形に戻す
       this.relaxed = true;

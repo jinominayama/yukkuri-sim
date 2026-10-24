@@ -27,6 +27,10 @@ const PUT_AHEAD = 0.25;
 const PUT_HEIGHT = 0.5;
 /** 脱ぐとき、この進みから円錐をつぶし始める（かぶるときは逆に、始めのこの割合までに戻す） */
 const CRUSH_FROM = 0.55;
+/** かぶる向きのまま置くときの、つばの根元の地面からの高さ（帽子の大きさに対する比。つばの縁が地面に着く） */
+const UPRIGHT_HEIGHT = 0.14;
+/** かぶる向きのまま置くときの、つばの縁と体の表面の間（胴の半径に対する比） */
+const UPRIGHT_GAP = 0.6;
 /** ひっくり返す途中に持ち上げる高さ（胴の半径に対する比） */
 const ARC = 0.55;
 /** 時間（秒）：つかむ・脱ぐ（かぶる）・放す・頭へ戻る（やめたとき） */
@@ -74,6 +78,8 @@ export class HatStash {
   /** 置いたときにつかむ所（ワールド）と、回す向き（+1/-1） */
   private readonly putGrab = new THREE.Vector3();
   private turnSign = 1;
+  /** かぶる向きのまま置く（逆さにしない） */
+  private upright = false;
   /** 地面に置いた帽子の置き場（行列） */
   private readonly ground = new THREE.Matrix4();
   /** やめたときの帽子の置き場（ここから頭へ戻る） */
@@ -105,14 +111,19 @@ export class HatStash {
     return out.set(0, 0.25, 0).applyMatrix4(this.ground);
   }
 
-  /** 脱ぎ始める。帽子・三つ編みがないとき・気絶中・倒れているときは false */
-  start(hooks: StashHooks): boolean {
+  /**
+   * 脱ぎ始める。帽子・三つ編みがないとき・気絶中・倒れているときは false。
+   * upright：逆さにせず、かぶる向きのまま置く（持ち上げながら水平に半回転させて、つかんだ縁を体の側にして横の地面へ）
+   */
+  start(hooks: StashHooks, upright = false): boolean {
     const y = this.y;
     const hat = y.outfit.hat, braid = y.outfit.braid;
     if (this.active || !hat || !braid || !braid.grip.ready || y.rest.fainting || y.locomotion.isLying || y.locomotion.tilted) return false;
     y.rest.wake(true);
     this.hooks = hooks;
     this.tipped = false;
+    this.upright = upright;
+    hat.lined = !upright;
     y.locomotion.stop();
     y.locomotion.hold();
     this.front.copy(bodyFacing(y));
@@ -209,7 +220,7 @@ export class HatStash {
       case 'off': {
         const k = Math.min(1, this.t / FLIP_TIME);
         hat.carry = this.flipPose(k, hat.worn, this.carry);
-        hat.crush = smooth((k - CRUSH_FROM) / (1 - CRUSH_FROM));
+        hat.crush = this.upright ? 0 : smooth((k - CRUSH_FROM) / (1 - CRUSH_FROM));
         braid.reachTarget.copy(this.grabLocal).applyMatrix4(hat.carry);
         braid.reachAmount = 1;
         y.lookAt(braid.reachTarget);
@@ -283,7 +294,7 @@ export class HatStash {
         // 脱ぐのを逆に。戻った所・向きのずれは始めの少しの間に置いた形から寄せる
         const live = this.flipPose(1 - k, hat.worn, new THREE.Matrix4());
         hat.carry = blend(this.ground, live, smooth(k / 0.25), this.carry);
-        hat.crush = 1 - smooth(k / (1 - CRUSH_FROM));
+        hat.crush = this.upright ? 0 : 1 - smooth(k / (1 - CRUSH_FROM));
         braid.reachTarget.copy(this.grabLocal).applyMatrix4(hat.carry);
         braid.reachAmount = 1;
         y.lookAt(braid.reachTarget);
@@ -309,7 +320,8 @@ export class HatStash {
     const move = smooth(k);
     const pivot = g.clone().lerp(this.putGrab, move);
     pivot.y += Math.sin(Math.PI * Math.min(1, k * 1.1)) * R * ARC;
-    const rot = new THREE.Matrix4().makeRotationAxis(this.front, this.turnSign * Math.PI * turn);
+    const rot = this.upright ? new THREE.Matrix4().makeRotationY(Math.PI * turn)
+      : new THREE.Matrix4().makeRotationAxis(this.front, this.turnSign * Math.PI * turn);
     return out.makeTranslation(pivot.x, pivot.y, pivot.z).multiply(rot)
       .multiply(new THREE.Matrix4().makeTranslation(-g.x, -g.y, -g.z)).multiply(worn);
   }
@@ -325,15 +337,17 @@ export class HatStash {
     // 外へ回す向き：四半回転のとき、帽子の中心がつかむ所より上に来る向き
     const up = (s: number) => c.clone().applyAxisAngle(this.front, (s * Math.PI) / 2).y;
     this.turnSign = up(1) >= up(-1) ? 1 : -1;
-    const flipped = c.clone().applyAxisAngle(this.front, this.turnSign * Math.PI);
+    const flipped = this.upright ? c.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI)
+      : c.clone().applyAxisAngle(this.front, this.turnSign * Math.PI);
     const scale = new THREE.Vector3().setFromMatrixColumn(worn, 1).length();
     // つばの縁はつかむ所よりさらに外へ出ている。その縁が体の表面より外に来るように（重なると体の輪郭線がつばを突き抜けて見えた）
     const edge = this.grabLocal.clone().multiplyScalar(1 / Math.hypot(this.grabLocal.x, this.grabLocal.z));
     const rim = hat.brimLocal(Math.atan2(edge.x, edge.z), 1, new THREE.Vector3());
     const overhang = Math.hypot(rim.x - this.grabLocal.x, rim.z - this.grabLocal.z) * scale;
-    const out = Math.max(R * PUT_SIDE, bodyExtent(y, this.side) + overhang + R * PUT_GAP);
+    // かぶる向きのまま置くときは少し遠くへ（おたべなさいで、割れて外へ傾く半分がつばに当たらないように）
+    const out = Math.max(R * PUT_SIDE, bodyExtent(y, this.side) + overhang + R * (this.upright ? UPRIGHT_GAP : PUT_GAP));
     this.putGrab.copy(this.spot).addScaledVector(this.side, out).addScaledVector(this.front, R * PUT_AHEAD);
-    this.putGrab.y = PUT_HEIGHT * scale - flipped.y;
+    this.putGrab.y = (this.upright ? UPRIGHT_HEIGHT : PUT_HEIGHT) * scale - flipped.y;
   }
 
   /** 身ぶり：始めた向きを向き、三つ編みの側へ lean の割合だけ傾ける */
@@ -363,6 +377,7 @@ export class HatStash {
     if (hat) {
       hat.carry = null;
       hat.crush = 0;
+      hat.lined = true;
     }
     this.phase = 'idle';
     this.hooks = null;

@@ -110,7 +110,10 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
   raycaster.setFromCamera(pointer, camera);
-  const hit = raycaster.intersectObject(yukkuri.bodyMesh, false)[0];
+  // 二つに割れた後（おたべなさい）は、割れた半分に当てる
+  const hit = yukkuri.otabe.split
+    ? raycaster.intersectObject(yukkuri.otabe.pickTarget, true)[0]
+    : raycaster.intersectObject(yukkuri.bodyMesh, false)[0];
   if (hit) {
     if (e.shiftKey) yukkuri.slap(hit.point, raycaster.ray.direction, view.slapStrength);
     else yukkuri.poke(hit.point, raycaster.ray.direction, view.pokeStrength);

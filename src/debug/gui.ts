@@ -163,7 +163,8 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   const greet = doGroup.addFolder('あいさつ');
   noLock(greet.add(y.greet, 'declareFirst').name('動作の前に宣言する').onChange(() => y.greet.save()));
   greet.add({ f: () => y.greet.say('greetYukkuri') }, 'f').name('ゆっくりしていってね！');
-  greet.add({ f: () => y.greet.say('greetEatMe') }, 'f').name('おたべなさい！');
+  // おたべなさい：言ってから、帽子を脱いで横に置き、二つに割れる（戻すのはページの読み直し）
+  greet.add({ f: () => { if (!y.otabe.active && !y.death.active && !y.rest.fainting) { y.greet.say('greetEatMe'); y.otabe.start(); } } }, 'f').name('おたべなさい！');
   // 死ぬ：言ってから、震えながら柔らかく黒ずんで止まる（戻すのはページの読み直し）
   greet.add({ f: () => { if (!y.death.active && !y.rest.fainting) { y.greet.say('greetLast'); y.death.start(); } } }, 'f').name('もっとゆっくりしたかったよ…');
   greet.add({ f: () => y.greet.say('greetPlace') }, 'f').name('ここを○○のゆっくりぷれいすにするよ！');

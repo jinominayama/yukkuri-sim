@@ -46,7 +46,7 @@ export class Outfit {
   characterId: string;
   /** 保存された設定がなかった（初めて開いた） */
   readonly fresh: boolean;
-  private accessories: Accessory[] = [];
+  private parts: Accessory[] = [];
   /** 体型 ID → 調整値（初期値から変えた体型だけ） */
   private fits: Record<string, Fit>;
   /** 今の体型（調整値をどの体型のものとして読み書きするか） */
@@ -135,7 +135,7 @@ export class Outfit {
    * 画面で動かしたとき用（スライダーが制限の所で止まる）。変わったら true
    */
   applyLimits(): boolean {
-    const hat = this.accessories.find((a): a is WitchHat => a instanceof WitchHat);
+    const hat = this.parts.find((a): a is WitchHat => a instanceof WitchHat);
     if (!hat || hat.tiltUsed === this.params.hatTilt) return false;
     this.params.hatTilt = hat.tiltUsed;
     return true;
@@ -143,15 +143,15 @@ export class Outfit {
 
   /** アクセサリーを作り直す */
   create(): void {
-    for (const a of this.accessories) {
+    for (const a of this.parts) {
       this.object.remove(a.object);
       a.dispose?.();
     }
-    this.accessories = this.character.create(this.ctx, this.params);
-    for (const a of this.accessories) this.object.add(a.object);
+    this.parts = this.character.create(this.ctx, this.params);
+    for (const a of this.parts) this.object.add(a.object);
     // 三つ編みの編み始めは帽子の外へ（帽子を表示しているときだけ）
-    const hat = this.accessories.find((a): a is WitchHat => a instanceof WitchHat);
-    for (const a of this.accessories) {
+    const hat = this.parts.find((a): a is WitchHat => a instanceof WitchHat);
+    for (const a of this.parts) {
       if (a instanceof Braid && hat) a.cover = (p) => this.params.showHat && hat.covers(p);
     }
     this.rebuild();
@@ -165,7 +165,7 @@ export class Outfit {
     if (!rest) return;
     this.index.build(rest.array as Float32Array, u.uHeadC.value as THREE.Vector3, u.uHeadR.value as number);
     this.refreshArrays();
-    for (const a of this.accessories) a.rebuild(this.ctx);
+    for (const a of this.parts) a.rebuild(this.ctx);
     this.applyVisibility();
   }
 
@@ -238,16 +238,21 @@ export class Outfit {
     return best;
   }
 
+  /** 作ったアクセサリー（髪・三つ編み・帽子など） */
+  get accessories(): readonly Accessory[] {
+    return this.parts;
+  }
+
   /** 帽子（表示しているときだけ。物を乗せるのに使う） */
   get hat(): WitchHat | null {
     if (!this.params.showHat) return null;
-    return this.accessories.find((a): a is WitchHat => a instanceof WitchHat) ?? null;
+    return this.parts.find((a): a is WitchHat => a instanceof WitchHat) ?? null;
   }
 
   /** 三つ編み（表示しているときだけ。物を持つのに使う） */
   get braid(): Braid | null {
     if (!this.params.showBraid) return null;
-    return this.accessories.find((a): a is Braid => a instanceof Braid) ?? null;
+    return this.parts.find((a): a is Braid => a instanceof Braid) ?? null;
   }
 
   /** 体の頂点 i の今の位置と法線（ワールド座標） */
@@ -258,12 +263,12 @@ export class Outfit {
 
   /** 描画の直前に呼ぶ（体の描画メッシュを更新した後）。still：立ち止まって落ち着いているか */
   update(still = true): void {
-    if (this.accessories.length === 0) return;
+    if (this.parts.length === 0) return;
     this.ctx.still = still;
     this.refreshArrays();
     // 帽子を先に（三つ編みが帽子の今の位置を見るので）
-    for (const a of this.accessories) if (a instanceof WitchHat) a.update(this.ctx);
-    for (const a of this.accessories) if (!(a instanceof WitchHat)) a.update(this.ctx);
+    for (const a of this.parts) if (a instanceof WitchHat) a.update(this.ctx);
+    for (const a of this.parts) if (!(a instanceof WitchHat)) a.update(this.ctx);
   }
 
   /** 髪型のパーツの今の選択（未選択なら先頭の選択肢） */
@@ -276,12 +281,12 @@ export class Outfit {
   /** 髪型のパーツを選ぶ（髪を描き直して保存） */
   setHairPart(part: string, id: string): void {
     this.params.hairParts[part] = id;
-    for (const a of this.accessories) if (a instanceof HairShell) a.repaint();
+    for (const a of this.parts) if (a instanceof HairShell) a.repaint();
     this.save();
   }
 
   applyVisibility(): void {
-    for (const a of this.accessories) {
+    for (const a of this.parts) {
       if (a instanceof HairShell) a.object.visible = this.params.showHair;
       else if (a instanceof WitchHat) a.object.visible = this.params.showHat;
       else if (a instanceof Braid) a.object.visible = this.params.showBraid;

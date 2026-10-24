@@ -165,9 +165,24 @@ export class Poke {
     this.hit(point, dir, strength, true);
   }
 
+  /** 叩いた所に音の文字（体の表面から少し手前に出す。dir は叩いた向きの単位ベクトル） */
+  private slapSound(point: THREE.Vector3, dir: THREE.Vector3): void {
+    const y = this.y;
+    const R = y.shape.radius;
+    const at = point.clone().addScaledVector(dir, -R * 0.15);
+    const sound = SLAP_SOUNDS[Math.floor(Math.random() * SLAP_SOUNDS.length)];
+    y.texts.say(sound, at.clone().add(new THREE.Vector3(0, R * 0.35, 0)), R * 0.32, 0.7, new THREE.Vector3(0, R * 0.5, 0));
+  }
+
   private hit(point: THREE.Vector3, dir: THREE.Vector3, strength: number, slap: boolean): void {
     const y = this.y;
     const R = y.shape.radius;
+    // 二つに割れた後：当たった半分が固いまま揺れるだけ（叩いたら音の文字も）。顔・声・ストレスはなし
+    if (y.otabe.split) {
+      y.otabe.hit(point, dir, strength);
+      if (slap) this.slapSound(point, dir.clone().normalize());
+      return;
+    }
     const dead = y.death.active; // 死んでいく途中・死んだ後は、体が押される・へこむだけ（起きない・ストレス・顔・声なし）
     if (!dead) y.rest.wake(true); // 眠っていたら起きる（顔はつつかれた反応にする）
     this.point.copy(point);
@@ -183,12 +198,7 @@ export class Poke {
     if (slap) y.forage.spill(); // 叩かれると帽子のつばの餌は落ちる
     // 押された量をためて、届いたら倒れる（立っているとき）・転がる（寝転んでいるとき）
     this.knockOver(slap, strength);
-    if (slap) {
-      // 当たった所に音の文字（体の表面から少し手前に出す）
-      const at = point.clone().addScaledVector(this.velocity.clone().normalize(), -R * 0.15);
-      const sound = SLAP_SOUNDS[Math.floor(Math.random() * SLAP_SOUNDS.length)];
-      y.texts.say(sound, at.clone().add(new THREE.Vector3(0, R * 0.35, 0)), R * 0.32, 0.7, new THREE.Vector3(0, R * 0.5, 0));
-    }
+    if (slap) this.slapSound(point, this.velocity.clone().normalize());
     // 枝を持っていてつつかれたら、痛がる代わりに枝を振って威嚇し返す（叩かれたときは痛がる）
     if (!slap && y.branch.counter()) return;
     // 顔（ほかの動きが顔を使っていなければ）

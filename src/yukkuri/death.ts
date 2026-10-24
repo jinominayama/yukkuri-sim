@@ -53,7 +53,7 @@ export class Death {
   /** 死に始める（もう始まっていれば何もしない） */
   start(): boolean {
     const y = this.y;
-    if (this.active) return false;
+    if (this.active || y.otabe.active) return false;
     // ほかの動きはやめる（止められるもの）
     y.feeding.cancel();
     y.exercise.cancel();

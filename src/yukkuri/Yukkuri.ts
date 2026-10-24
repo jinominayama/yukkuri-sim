@@ -25,6 +25,7 @@ import { Forage } from './forage';
 import { PushBox } from './box';
 import { Greet } from './greet';
 import { Death } from './death';
+import { Otabe } from './otabe';
 import { Voice, type LineKey } from './lines';
 import { faceFrame, TextFx } from './fx';
 import { FACE_RECT } from '../face/types';
@@ -116,6 +117,8 @@ export class Yukkuri {
   readonly greet: Greet;
   /** 死ぬ（「もっとゆっくりしたかったよ…」の後）。死んでいく間と死んだ後は、ほかの動きを動かさない */
   readonly death: Death;
+  /** おたべなさい（「おたべなさい！」の後、二つに割れる）。割れた後は体の物理と装飾の更新を止める */
+  readonly otabe: Otabe;
   /** セリフの口調（キャラクターごとに選ぶ。保存する） */
   readonly voice: Voice;
   /** 見ている人（カメラ）の位置。ぷくーでその方を向く。main が渡す */
@@ -192,6 +195,7 @@ export class Yukkuri {
     this.box = new PushBox(this);
     this.greet = new Greet(this);
     this.death = new Death(this);
+    this.otabe = new Otabe(this);
     this.puku.usePreset(this.presetId);
     this.peni = new Peni(this);
     this.peni.usePreset(this.presetId);
@@ -386,6 +390,12 @@ export class Yukkuri {
     // 呼吸：速さを変えても波が飛ばないよう、位相を積み上げる
     this.breathPhase = (this.breathPhase + dt * Math.PI * 2 * this.life.breathRate * this.breathSlow) % (Math.PI * 2);
     this.body.volumeScale = 1 + this.life.breath * this.breathGain * Math.sin(this.breathPhase);
+    // 二つに割れた後：体の物理も止め、割れた半分が開く動きだけ
+    if (this.otabe.split) {
+      this.otabe.update(dt);
+      this.texts.update(dt);
+      return;
+    }
     // 死んでいく間・死んだ後：ほかの動きは動かさず、体の物理と、つつかれてへこむ動きだけ
     if (this.death.active) {
       this.death.update(dt);
@@ -406,6 +416,7 @@ export class Yukkuri {
     this.forage.update(dt);
     this.box.update(dt); // 行き先を移動の処理より先に指示する
     this.greet.update(dt); // 宣言を言い終えたら動作を始める（動作の処理は次のステップから）
+    this.otabe.update(dt); // 帽子を脱いでから割れる（割れるまでは移動を止めておく）
     this.vomit.update(dt); // 吐くときの身ぶりも移動の処理より先に指示する
     this.exercise.update(dt); // 体操の身ぶりを移動の処理より先に指示する
     this.locomotion.update(dt, this.physics.gravity);
@@ -420,6 +431,12 @@ export class Yukkuri {
 
   /** 描画直前に呼ぶ */
   sync(): void {
+    // 二つに割れた後は、固めた半分を動かすだけ（体の形・装飾は更新しない）
+    if (this.otabe.split) {
+      this.otabe.sync();
+      this.face.render();
+      return;
+    }
     this.skin.update(this.body);
     // 震え：左右・前後に、少しずらした速さで小刻みに揺らす（見た目だけ）
     if (this.tremble > 0) {
@@ -447,6 +464,12 @@ export class Yukkuri {
     this.shadow.position.set(c.x, 0.002, c.z);
     this.shadow.scale.set(s, 1, s);
     this.shadow.material.uniforms.uOpacity.value = 0.55 / (1 + lift * 2);
+  }
+
+  /** 体と輪郭線を隠す（二つに割れたとき、作った半分に置き換える） */
+  hideBody(): void {
+    this.bodyMesh.visible = false;
+    this.outline.visible = false;
   }
 
   get center(): THREE.Vector3 {
