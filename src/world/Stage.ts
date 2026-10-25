@@ -82,6 +82,11 @@ export class Stage {
     return this.cage?.foodDish ?? null;
   }
 
+  /** 水皿（飼育ケースのとき。中心・半径・水面の高さと半径） */
+  get waterDish(): { x: number; z: number; r: number; surfaceY: number; surfaceR: number } | null {
+    return this.cage?.waterDish ?? null;
+  }
+
   /** 置いてある物（皿など。体が乗れない所）：中心と半径（m） */
   get props(): readonly { x: number; z: number; r: number }[] {
     return this.cage?.props ?? [];

@@ -68,6 +68,7 @@ scene.add(yukkuri.texts.object);
 scene.add(yukkuri.branch.object);
 scene.add(yukkuri.forage.object);
 scene.add(yukkuri.box.object);
+scene.add(yukkuri.dishEat.object);
 // いる場所（マップ）
 const stage = new Stage(yukkuri.bodyMaterial, yukkuri.outlineMaterial);
 scene.add(stage.object);

@@ -122,7 +122,7 @@ export class Yukkuri {
   readonly death: Death;
   /** おたべなさい（「おたべなさい！」の後、二つに割れる）。割れた後は体の物理と装飾の更新を止める */
   readonly otabe: Otabe;
-  /** 餌皿から直接食べる（飼育ケース。皿のそばへ行き、皿に顔を突っ込んで 1 個食べる） */
+  /** 皿から直接食べる・飲む（飼育ケース。皿のそばへ行き、皿に顔を突っ込んで 1 個食べる／水を飲む。波の輪は dishEat.object） */
   readonly dishEat: DishEat;
   /** おうち（おうちせんげんをした場所。巣作りなどの起点。画面には出さない） */
   readonly home = new Home();

@@ -28,7 +28,7 @@ const GLASS_NEAR_OPACITY = 0.15;
 // 水皿と寝床は、ゆっくりが普通の 1/4 という体に合わせて最初の倍の大きさ（指示）。大きくした分、壁から離して並べ直した。
 // 餌皿は元の大きさ（指示。大きくしても、体が乗れないので餌を置ける所は縁寄りだけで、使わない所が多かった）
 const FOOD_DISH = { x: 2.55, z: -2.1, r: 0.34, h: 0.1 };
-const WATER_DISH = { x: 3.85, z: -1.95, r: 0.6, h: 0.22 };
+const WATER_DISH = { x: 3.85, z: -1.95, r: 0.6, h: 0.12 };
 const BED = { x: -3.0, z: -1.5, w: 3.4, d: 2.6, t: 0.05 };
 
 const FRAME_COLORS = { lit: '#8d969c', shade: '#6d757b', deep: '#545b60', rim: '#d6dde2' };
@@ -61,6 +61,8 @@ export class Cage {
     x: FOOD_DISH.x, z: FOOD_DISH.z, r: FOOD_DISH.r, ring: [FOOD_DISH.r * 0.1, FOOD_DISH.r * 0.4] as const,
     floorAt: (dist: number) => bowlFloor(FOOD_DISH.r, FOOD_DISH.h, dist),
   };
+  /** 水皿：中心・半径と、水面の高さ・半径（m） */
+  readonly waterDish = { x: WATER_DISH.x, z: WATER_DISH.z, r: WATER_DISH.r, surfaceY: WATER_DISH.h * 0.72, surfaceR: WATER_DISH.r * 0.86 };
   /** 置いてある物（体が乗れない所）：餌皿・水皿の中心と半径 */
   readonly props = [FOOD_DISH, WATER_DISH].map((d) => ({ x: d.x, z: d.z, r: d.r }));
   private readonly floor: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;

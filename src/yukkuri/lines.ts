@@ -19,8 +19,8 @@ export type LineKey =
   | 'forageGo' | 'forageLower' | 'forageOnHat' | 'forageFull' | 'forageBusy' | 'forageSpill'
   | 'stashStart' | 'stashIn' | 'stashDone' | 'stashFull' | 'stashNone'
   | 'boxGo' | 'boxPush' | 'boxDone' | 'boxStuck' | 'boxBump'
-  | 'dishNone' | 'dishEmpty'
-  | 'declarePoo' | 'declareExercise' | 'declareMeal' | 'declareSleep'
+  | 'dishNone' | 'dishEmpty' | 'waterNone'
+  | 'declarePoo' | 'declareExercise' | 'declareMeal' | 'declareSleep' | 'declareDrink'
   | 'greetYukkuri' | 'greetEatMe' | 'greetLast' | 'greetPlace'
   | 'dyingGasp';
 
@@ -82,11 +82,13 @@ const COMMON: Lines = {
   boxStuck: ['ゆぅ…うごかないよ…', 'かべさんがじゃまするよ…', 'ゆぎぎ…びくともしないよ…'],
   dishNone: ['ここにはおさらさんがないよ…'],
   dishEmpty: ['おさらさんがからっぽだよ…', 'ごはんさんがないよ…'],
+  waterNone: ['ここにはおみずさんがないよ…'],
   boxBump: ['ゆっ！？はこさんがあるよ…', 'とおれないよ…', 'ゆぅ…じゃまだよ…'],
   declarePoo: ['うんうんするよ！'],
   declareExercise: ['うんうんたいそうはじまるよ！'],
   declareMeal: ['すーぱーむしゃむしゃたいむはじまるよ！'],
   declareSleep: ['すーやすーやするよ！'],
+  declareDrink: ['ごーくごーくするよ！'],
   greetYukkuri: ['ゆっくりしていってね！'],
   greetEatMe: ['おたべなさい！'],
   greetLast: ['もっとゆっくりしたかったよ…'],
@@ -148,11 +150,13 @@ const MARISA_NOZE: Partial<Lines> = {
   boxStuck: ['ゆぅ…うごかないのぜ…', 'かべさんがじゃまなのぜ…', 'ゆぎぎ…びくともしないのぜ…'],
   dishNone: ['ここにはおさらさんがないのぜ…'],
   dishEmpty: ['おさらさんがからっぽなのぜ…', 'ごはんさんがないのぜ…'],
+  waterNone: ['ここにはおみずさんがないのぜ…'],
   boxBump: ['ゆっ！？はこさんがじゃまなのぜ…', 'とおれないのぜ…', 'ゆぅ…どくのぜ…'],
   declarePoo: ['うんうんするのぜ！'],
   declareExercise: ['うんうんたいそうはじまるのぜ！'],
   declareMeal: ['すーぱーむしゃむしゃたいむはじまるのぜ！'],
   declareSleep: ['すーやすーやするのぜ！'],
+  declareDrink: ['ごーくごーくするのぜ！'],
   greetLast: ['もっとゆっくりしたかったのぜ…'],
   greetPlace: ['ここを{species}のゆっくりぷれいすにするのぜ！'],
 };

@@ -120,6 +120,21 @@ export class Feeding {
     return true;
   }
 
+  /**
+   * しあわせーだけ（水を飲んだ後など）：食べたときと同じ顔・文字・震え。ストレスは変えない。食べている最中なら何もしない
+   */
+  celebrate(): boolean {
+    if (this.active) return false;
+    this.y.locomotion.hold();
+    this.external = null;
+    this.measure();
+    this.phase = 'happy';
+    this.t = 0;
+    this.show(FACE_HAPPY, AT_LEAST_HAPPY);
+    this.say('しあわせー', true);
+    return true;
+  }
+
   /** 途中でやめる（食べ物・演出を片付け、いつもの顔に戻す） */
   cancel(): void {
     this.removeFood();

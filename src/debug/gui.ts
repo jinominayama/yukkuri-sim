@@ -214,6 +214,13 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
       else y.greet.declare('declareMeal', () => canAct() && !y.dishEat.active, () => y.dishEat.start());
     },
   }, 'f').name('餌皿から食べる');
+  // 水を飲む（飼育ケース）：水皿のそばへ行き、皿に顔を突っ込んで「ごーくごーく」。水皿がないときは、わけを言うだけ（宣言しない）
+  meal.add({
+    f: () => {
+      if (y.dishEat.reason('drink')) y.dishEat.start('drink');
+      else y.greet.declare('declareDrink', () => canAct() && !y.dishEat.active, () => y.dishEat.start('drink'));
+    },
+  }, 'f').name('水を飲む');
   // おまんじゅうを出す（飼育ケースでは餌皿の中に。ほかの場所では前の地面に）
   meal.add({
     f: () => {

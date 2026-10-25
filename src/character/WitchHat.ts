@@ -66,6 +66,11 @@ export class WitchHat implements Accessory {
   private lift = 0;
   /** 持ち上げたい量。lift は毎回ここへ近づける（一度に持ち上げると帽子と三つ編みの編み始めが跳んで見える） */
   private liftGoal = 0;
+  /**
+   * 持ち上げた帽子を下げずに保つ（皿に顔を突っ込んで食べる・飲む間など、同じ姿勢を続けるとき）。
+   * 食い込みが少し減るたびに下げてはまた持ち上げ、帽子が小刻みに揺れて髪が突き抜けていた
+   */
+  holdLift = false;
   private basePush = -1;
   /** 実際に使った前後の傾き（制限で調整値より小さくなることがある） */
   tiltUsed = 0;
@@ -293,7 +298,7 @@ export class WitchHat implements Accessory {
     // 食い込みは今の lift で測っているので、持ち上げたい量は今の lift からの上乗せ（追いつく途中で積み増さない）
     if (this.folded) this.liftGoal = Math.max(0, this.liftGoal - LIFT_DROP * 4);
     else if (over > 0) this.liftGoal = Math.min(LIFT_MAX, Math.max(this.liftGoal, this.lift + over * LIFT_GAIN));
-    else if (over < -LIFT_SLACK) this.liftGoal = Math.max(0, this.liftGoal - LIFT_DROP);
+    else if (over < -LIFT_SLACK && !this.holdLift) this.liftGoal = Math.max(0, this.liftGoal - LIFT_DROP);
   }
 
   /**
