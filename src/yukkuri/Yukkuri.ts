@@ -27,6 +27,7 @@ import { Greet } from './greet';
 import { Death } from './death';
 import { Otabe } from './otabe';
 import { Home } from './home';
+import { DishEat } from './dishEat';
 import type { Stage } from '../world/Stage';
 import { Voice, type LineKey } from './lines';
 import { faceFrame, TextFx } from './fx';
@@ -121,6 +122,8 @@ export class Yukkuri {
   readonly death: Death;
   /** おたべなさい（「おたべなさい！」の後、二つに割れる）。割れた後は体の物理と装飾の更新を止める */
   readonly otabe: Otabe;
+  /** 餌皿から直接食べる（飼育ケース。皿のそばへ行き、皿に顔を突っ込んで 1 個食べる） */
+  readonly dishEat: DishEat;
   /** おうち（おうちせんげんをした場所。巣作りなどの起点。画面には出さない） */
   readonly home = new Home();
   /** セリフの口調（キャラクターごとに選ぶ。保存する） */
@@ -185,6 +188,7 @@ export class Yukkuri {
 
     this.locomotion = new Locomotion(this.body, this.move);
     this.feeding = new Feeding(this);
+    this.dishEat = new DishEat(this);
     this.dropping = new Dropping(this);
     this.dropping.usePreset(this.presetId);
     this.exercise = new Exercise(this);
@@ -452,6 +456,7 @@ export class Yukkuri {
     this.branch.update(dt);
     this.forage.update(dt);
     this.box.update(dt); // 行き先を移動の処理より先に指示する
+    this.dishEat.update(dt);
     this.greet.update(dt); // 宣言を言い終えたら動作を始める（動作の処理は次のステップから）
     this.otabe.update(dt); // 帽子を脱いでから割れる（割れるまでは移動を止めておく）
     this.vomit.update(dt); // 吐くときの身ぶりも移動の処理より先に指示する

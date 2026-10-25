@@ -92,6 +92,8 @@ const DROP_TIME = 0.55;
 const SPILL_TILT = 0.9;
 
 const ACORN = { lit: '#b9824a', shade: '#8d5a2c', deep: '#5c3616', rim: '#f0d3b0' };
+/** おまんじゅう（「ごはん」と同じ色） */
+const MANJU = { lit: '#f3d2a2', shade: '#d9a96e', deep: '#a8723f', rim: '#fff3dc' };
 const ACORN_CAP = { lit: '#8a6a44', shade: '#634a2c', deep: '#3e2c18', rim: '#d8c3a6' };
 const GRASS = { lit: '#9bd06a', shade: '#6aa043', deep: '#41712a', rim: '#eaf8d0' };
 const BUG = { lit: '#5a8a5a', shade: '#2f5a3c', deep: '#173024', rim: '#c9f0d8' };
@@ -101,7 +103,7 @@ export class Forage {
   /** 餌（体と一緒に震えないよう、シーンに直接置く） */
   readonly object = new THREE.Group();
   /** 次に出す餌の種類（'random' でランダム） */
-  kindId: 'random' | 'acorn' | 'grass' | 'bug' = 'random';
+  kindId: 'random' | 'acorn' | 'grass' | 'bug' | 'manju' = 'random';
   private readonly items: Item[] = [];
   private readonly picker: BraidPick;
   private readonly stash: HatStash;
@@ -137,6 +139,7 @@ export class Forage {
     mat('grass', GRASS, true);
     mat('bug', BUG);
     mat('leg', BUG_LEG);
+    mat('manju', MANJU);
     this.outline = createAccessoryOutlineMaterial(y.outlineMaterial);
   }
 
@@ -289,6 +292,40 @@ export class Forage {
       it.spin.set(Math.random() * 10 - 5, Math.random() * 10 - 5, Math.random() * 10 - 5);
     }
     if (n > 0 && say) this.say(y.line('forageSpill'), 0.22, 1.8);
+  }
+
+  /**
+   * 餌皿の中にある餌（地面に置いた状態で、皿の中にあるもの）のうち、点 near に一番近いもの。なければ null。
+   * 食べる側（DishEat）が使う：pos は餌の位置（動かさないこと）、eaten() で食べ終えた餌を消す
+   */
+  dishItem(near: THREE.Vector3): { pos: THREE.Vector3; kind: FoodKind; eaten: () => void; gone: () => boolean } | null {
+    const dish = this.y.stage?.foodDish;
+    if (!dish) return null;
+    let best: Item | null = null;
+    let bestD = Infinity;
+    for (const it of this.items) {
+      if (it.state !== 'ground' || it.base <= 0) continue;
+      const p = it.object.position;
+      if (Math.hypot(p.x - dish.x, p.z - dish.z) > dish.r) continue;
+      const d = Math.hypot(p.x - near.x, p.z - near.z);
+      if (d < bestD) {
+        bestD = d;
+        best = it;
+      }
+    }
+    if (!best) return null;
+    const it = best;
+    return {
+      pos: it.object.position,
+      kind: it.kind,
+      eaten: () => {
+        const i = this.items.indexOf(it);
+        if (i >= 0) this.items.splice(i, 1);
+        this.object.remove(it.object);
+      },
+      // 拾われた・片付けられた（地面にない）
+      gone: () => !this.items.includes(it) || it.state !== 'ground',
+    };
   }
 
   /** 片付ける（拾う途中ならやめる） */
@@ -671,7 +708,7 @@ export class Forage {
 
   /** 立てて置いたとき、中心から底までの高さ（単位の大きさ） */
   private restLift(id: string): number {
-    return id === 'acorn' ? 0.05 : id === 'grass' ? 0.05 : 0.2;
+    return id === 'acorn' ? 0.05 : id === 'grass' ? 0.05 : id === 'manju' ? 0.21 : 0.2;
   }
 
   /** 餌の形（単位の大きさ。中心が原点、上が +y、前が +z） */
@@ -702,6 +739,13 @@ export class Forage {
         blade.rotateX(-0.08);
         add(blade, 'grass');
       }
+    } else if (id === 'manju') {
+      // おまんじゅう：下がやや平らな丸（「ごはん」の食べ物と同じ形）
+      const body = new THREE.SphereGeometry(0.6, 24, 14);
+      const p = body.getAttribute('position') as THREE.BufferAttribute;
+      for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) < 0 ? p.getY(i) * 0.35 : p.getY(i) * 0.62);
+      body.computeVertexNormals();
+      add(body, 'manju');
     } else {
       // 虫：つやのある甲羅の胴、小さな頭、細い脚 6 本
       const body = ellipsoid(0.36, 0.24, 0.5, 14);

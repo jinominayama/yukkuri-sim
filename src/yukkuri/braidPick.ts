@@ -35,9 +35,12 @@ const NEAR_ENOUGH = 1.0;
 /** 向きを合わせる：差がこれ（rad）より小さくなるか、この時間（秒）たったら、かがむ */
 const TURN_OK = 0.15;
 const TURN_MAX = 2.5;
-/** あきらめるまでの時間（秒）：これに、寄る道のり 1 m ごとに GIVE_UP_PER_M 秒を足す（飼育ケースの端から皿までで 15 秒を超えた） */
+/**
+ * あきらめるまでの時間（秒）：これに、寄る道のり 1 m ごとに GIVE_UP_PER_M 秒を足す（飼育ケースの端から皿までで 15 秒を超えた。
+ * なすび型は 1 m に 7 秒ほどかかる）
+ */
 const GIVE_UP = 15;
-const GIVE_UP_PER_M = 2;
+const GIVE_UP_PER_M = 9;
 /** かがむ（三つ編みを下ろす）時間・沿わせて止まる時間・持ち上げる時間（秒） */
 const LOWER_TIME = 0.5;
 const TOUCH_TIME = 0.25;

@@ -78,7 +78,7 @@ export class Stage {
   }
 
   /** 餌皿（飼育ケースのとき。中心・餌を置く輪・内側の底の高さ） */
-  get foodDish(): { x: number; z: number; ring: readonly [number, number]; floorAt: (dist: number) => number } | null {
+  get foodDish(): { x: number; z: number; r: number; ring: readonly [number, number]; floorAt: (dist: number) => number } | null {
     return this.cage?.foodDish ?? null;
   }
 

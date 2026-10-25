@@ -19,6 +19,7 @@ export type LineKey =
   | 'forageGo' | 'forageLower' | 'forageOnHat' | 'forageFull' | 'forageBusy' | 'forageSpill'
   | 'stashStart' | 'stashIn' | 'stashDone' | 'stashFull' | 'stashNone'
   | 'boxGo' | 'boxPush' | 'boxDone' | 'boxStuck' | 'boxBump'
+  | 'dishNone' | 'dishEmpty'
   | 'declarePoo' | 'declareExercise' | 'declareMeal' | 'declareSleep'
   | 'greetYukkuri' | 'greetEatMe' | 'greetLast' | 'greetPlace'
   | 'dyingGasp';
@@ -79,6 +80,8 @@ const COMMON: Lines = {
   boxPush: ['ゆっ…ゆっ…', 'うんしょ…うんしょ…', 'ゆぎぎ…', 'おもいよ…', 'ゆ～ん…しょっ…', 'がんばるよ…！'],
   boxDone: ['ふぅ…ゆっくりうごいたよ！', 'ゆっへん！', 'やったよ！', 'ゆぅ…つかれたよ…'],
   boxStuck: ['ゆぅ…うごかないよ…', 'かべさんがじゃまするよ…', 'ゆぎぎ…びくともしないよ…'],
+  dishNone: ['ここにはおさらさんがないよ…'],
+  dishEmpty: ['おさらさんがからっぽだよ…', 'ごはんさんがないよ…'],
   boxBump: ['ゆっ！？はこさんがあるよ…', 'とおれないよ…', 'ゆぅ…じゃまだよ…'],
   declarePoo: ['うんうんするよ！'],
   declareExercise: ['うんうんたいそうはじまるよ！'],
@@ -143,6 +146,8 @@ const MARISA_NOZE: Partial<Lines> = {
   boxPush: ['ゆっ…ゆっ…', 'うんしょ…なのぜ…', 'ゆぎぎ…', 'おもいのぜ…', 'まりさはまけないのぜ…！', 'もうちょっとなのぜ…'],
   boxDone: ['ふぅ…うごいたのぜ！', 'ゆっへん！', 'まりさのちからをみたか、なのぜ！', 'ゆぅ…つかれたのぜ…'],
   boxStuck: ['ゆぅ…うごかないのぜ…', 'かべさんがじゃまなのぜ…', 'ゆぎぎ…びくともしないのぜ…'],
+  dishNone: ['ここにはおさらさんがないのぜ…'],
+  dishEmpty: ['おさらさんがからっぽなのぜ…', 'ごはんさんがないのぜ…'],
   boxBump: ['ゆっ！？はこさんがじゃまなのぜ…', 'とおれないのぜ…', 'ゆぅ…どくのぜ…'],
   declarePoo: ['うんうんするのぜ！'],
   declareExercise: ['うんうんたいそうはじまるのぜ！'],

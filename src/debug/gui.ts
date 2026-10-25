@@ -207,6 +207,22 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   // ごはん：食べ物を目の前に置くと、見つめる → むーしゃむーしゃ → しあわせー の順に食べる
   const meal = living.addFolder('ごはん');
   meal.add({ f: () => y.greet.declare('declareMeal', canAct, () => y.feeding.start()) }, 'f').name('食べ物をあげる');
+  // 餌皿から食べる（飼育ケース）：皿のそばへ行き、皿に顔を突っ込んで 1 個食べる。皿がない・餌がないときは、わけを言うだけ（宣言しない）
+  meal.add({
+    f: () => {
+      if (y.dishEat.reason()) y.dishEat.start();
+      else y.greet.declare('declareMeal', () => canAct() && !y.dishEat.active, () => y.dishEat.start());
+    },
+  }, 'f').name('餌皿から食べる');
+  // おまんじゅうを出す（飼育ケースでは餌皿の中に。ほかの場所では前の地面に）
+  meal.add({
+    f: () => {
+      const k = y.forage.kindId;
+      y.forage.kindId = 'manju';
+      y.forage.spawn();
+      y.forage.kindId = k;
+    },
+  }, 'f').name('おまんじゅうを餌皿に出す');
 
   // うんうん：体の後ろから餡子を絞り出す。出したものは「片付ける」まで残る
   const poo = living.addFolder('うんうん');
@@ -278,7 +294,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
 
   // 餌集め：小さな餌を 1 個ずつ出し、三つ編みで拾って帽子のつばに乗せる
   const forage = tools.addFolder('餌集め');
-  noLock(forage.add(y.forage, 'kindId', { ランダム: 'random', 木の実: 'acorn', 草: 'grass', 虫: 'bug' }).name('出す餌'));
+  noLock(forage.add(y.forage, 'kindId', { ランダム: 'random', 木の実: 'acorn', 草: 'grass', 虫: 'bug', おまんじゅう: 'manju' }).name('出す餌'));
   noLock(forage.add(y.forage, 'pickMode', { つばに乗せる: 'brim', 帽子に直接入れる: 'hat' }).name('拾い方'));
   forage.add({ f: () => y.forage.spawn() }, 'f').name('餌を出す');
   forage.add({ f: () => y.forage.pickNearest() }, 'f').name('拾う（近いものから）');

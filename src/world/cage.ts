@@ -53,12 +53,12 @@ export class Cage {
   readonly colliders: BoxCollider[] = [];
   readonly area: Area = { minX: -CAGE_W / 2, maxX: CAGE_W / 2, minZ: -CAGE_D / 2, maxZ: CAGE_D / 2 };
   /**
-   * 餌皿：中心と、餌を置く輪（中心からの距離 m）と、中心から dist m の所の内側の底の高さ。
+   * 餌皿：中心・半径（m）と、餌を置く輪（中心からの距離 m）と、中心から dist m の所の内側の底の高さ。
    * 輪は平らな底の内側：餌（差し渡し 16〜19 cm）の端が皿の内側の壁に入らない所まで
    * （縁寄りの 0.55〜0.7 倍に置くと、皿を元の大きさに戻したとき餌が皿の壁を突き抜けた）
    */
   readonly foodDish = {
-    x: FOOD_DISH.x, z: FOOD_DISH.z, ring: [FOOD_DISH.r * 0.1, FOOD_DISH.r * 0.4] as const,
+    x: FOOD_DISH.x, z: FOOD_DISH.z, r: FOOD_DISH.r, ring: [FOOD_DISH.r * 0.1, FOOD_DISH.r * 0.4] as const,
     floorAt: (dist: number) => bowlFloor(FOOD_DISH.r, FOOD_DISH.h, dist),
   };
   /** 置いてある物（体が乗れない所）：餌皿・水皿の中心と半径 */

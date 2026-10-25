@@ -59,6 +59,8 @@ export class Feeding {
   /** 今食べている食べ物の種類 */
   private kind: FoodKind = DEFAULT_FOOD;
   private food: THREE.Group | null = null;
+  /** よそに置いてある食べ物を食べる（餌皿の餌など）：食べ終えたら eaten で消してもらう。目の前に食べ物は置かない */
+  private external: { eaten: () => void } | null = null;
   private readonly foodGeometry: THREE.BufferGeometry;
   private readonly crumbGeometry: THREE.BufferGeometry;
   private readonly foodMaterial: THREE.ShaderMaterial;
@@ -88,13 +90,22 @@ export class Feeding {
     return this.phase !== 'none';
   }
 
-  /** 食べ物を目の前に置いて食べ始める。寝転がっていれば起き上がってから。食べている最中なら何もしない */
-  start(kind: FoodKind = DEFAULT_FOOD): boolean {
+  /** 見つめる・むーしゃむーしゃの途中か（しあわせーの前まで） */
+  get chewing(): boolean {
+    return this.phase === 'wait' || this.phase === 'gaze' || this.phase === 'chew';
+  }
+
+  /**
+   * 食べ物を目の前に置いて食べ始める。寝転がっていれば起き上がってから。食べている最中なら何もしない。
+   * external を渡すと、食べ物は置かず（よそに置いてある物を食べる）、むーしゃむーしゃが終わったら external.eaten() を呼ぶ
+   */
+  start(kind: FoodKind = DEFAULT_FOOD, external: { eaten: () => void } | null = null): boolean {
     if (this.active || this.y.dropping.active || this.y.exercise.active || this.y.vomit.active || this.y.rest.fainting) return false;
     this.y.rest.wake(true);
     const loco = this.y.locomotion;
     loco.hold();
     this.kind = kind;
+    this.external = external;
     this.t = 0;
     // 寝転がっていれば起き上がってから。跳ねている途中など体勢が変わっている途中なら、止まるまで待つ
     // （途中の向きで食べ物を置くと、顔の正面からずれる）
@@ -112,6 +123,7 @@ export class Feeding {
   /** 途中でやめる（食べ物・演出を片付け、いつもの顔に戻す） */
   cancel(): void {
     this.removeFood();
+    this.external = null;
     this.finish();
   }
 
@@ -143,6 +155,8 @@ export class Feeding {
           this.phase = 'happy';
           this.t = 0;
           this.removeFood();
+          this.external?.eaten();
+          this.external = null;
           this.show(FACE_HAPPY, AT_LEAST_HAPPY);
           this.say('しあわせー', true);
           this.y.stress.ate(this.kind.quality);
@@ -159,7 +173,7 @@ export class Feeding {
 
   private begin(): void {
     this.measure();
-    this.placeFood();
+    if (!this.external) this.placeFood();
     this.phase = 'gaze';
     this.t = 0;
     this.show(FACE_GAZE, AT_LEAST_GAZE);
