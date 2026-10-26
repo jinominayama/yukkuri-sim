@@ -192,6 +192,10 @@ const KNOCK_ROLL_GAIN = 1.1;
 const KNOCK_ROLL_MIN = 2.5;
 const KNOCK_ROLL_MAX = 3.5;
 const KNOCK_STAND = (30 * Math.PI) / 180;
+/** つつかれて転がるとき、底がこの回転（半回転に対する比）までに真下に来るなら、そこで止めて立ち上がる */
+const KNOCK_STAND_TURN = 0.75;
+/** 押された向きと底の向き（水平）の開きがこれより小さければ、底の向きへ転がして立たせる */
+const KNOCK_STAND_SIDE = (70 * Math.PI) / 180;
 /** 立っているときに押されて倒れる（knockDown）ときの、倒れる速さ（rad/s。自分から横になるときより速い） */
 const KNOCK_DOWN_SPEED = 3.2;
 /** 起き上がってから、倒れても寝転ばず立て直す猶予（秒） */
@@ -386,7 +390,8 @@ export class Locomotion {
    * 横になる。立っていれば前（腹ばい）・後ろ（仰向け）へそのまま倒れ、
    * 反対の体勢で横になっていれば、起き上がらずに寝返りで切り替える。移動中なら移動をやめる
    */
-  lieDown(pose: LyingPose): void {
+  lieDown(pose: LyingPose, passive = false): void {
+    if (this.immobile && !passive) return;
     const b = this.body;
     this.knockQueue = 0; // つつかれて続けて転がる分は、ほかの指示が来たらやめる
     this.lieSpeed = LIE_SPEED;
@@ -500,7 +505,21 @@ export class Locomotion {
     this.proneAfterRoll = false;
     // 横に転がって仰向けになっている体型も、ここからは普通の寝転びとして扱う（転がり終えたら近い方を選び直す）
     this.rolledOnBack = false;
-    this.startRoll(axis, 1, Math.PI);
+    // 底が押された側を向いていれば、半回転せずに底が真下に来る所まで転がって立ち上がる（腹ばい・仰向けに加えて、直立にもなる）。
+    // 体の下向き b を軸のまわりに θ 回したときの高さが一番低くなる θ を求め、半回転より手前で、ほぼ真下に来るならそこまで
+    const b = this._v.set(0, -1, 0).applyQuaternion(this.poseCmd);
+    // 底が押された向きの側（KNOCK_STAND_SIDE 以内）を向いていれば、押された向きでなく底の向きへ転がす
+    // （頬を下にして横から押す・前後に長い体型が長い軸のまわりに転がると、底が真下に来ず、いつまでも立てない）
+    const hx = b.x, hz = b.z, h = Math.hypot(hx, hz);
+    if (h > 0.3 && (hx * dirX + hz * dirZ) / (h * len) > Math.cos(KNOCK_STAND_SIDE)) axis.set(hz / h, 0, -hx / h);
+    const par = axis.clone().multiplyScalar(b.dot(axis));
+    const perp = b.clone().sub(par);
+    const cross = new Vector3().crossVectors(axis, perp);
+    let stand = Math.atan2(-cross.y, -perp.y);
+    if (stand < 0) stand += Math.PI * 2;
+    const lowest = -(par.y + perp.y * Math.cos(stand) + cross.y * Math.sin(stand));
+    const toStand = stand > 0.05 && stand < Math.PI * KNOCK_STAND_TURN && lowest > Math.cos(KNOCK_STAND);
+    this.startRoll(axis, 1, toStand ? stand : Math.PI);
     this.rollSpeed = speed;
     this.knockRoll = true;
     this.lieSign = -this.lieSign;
@@ -521,7 +540,7 @@ export class Locomotion {
     const b = this.body;
     const forward = Math.sin(b.yaw) * dirX + Math.cos(b.yaw) * dirZ;
     this.gesture = null;
-    this.lieDown(forward >= 0 ? 'prone' : 'supine');
+    this.lieDown(forward >= 0 ? 'prone' : 'supine', true);
     this.lieSpeed = KNOCK_DOWN_SPEED;
     return true;
   }
@@ -529,6 +548,7 @@ export class Locomotion {
   /** 横になっていれば、そのまま体を起こして起き上がる（横に転がって仰向けになっていれば、横に転がって戻る） */
   getUp(): void {
     if (this.state !== 'lieDown' && this.state !== 'lying') return;
+    if (this.immobile) return; // 足焼きで移動できなければ、自分から起き上がらない
     const b = this.body;
     this.knockQueue = 0;
     this.knockRoll = false;
@@ -621,11 +641,26 @@ export class Locomotion {
     return this.state === 'lieDown' || this.state === 'lying';
   }
 
+  /** つつかれて転がって立ち上がった回数（足焼き：ホットプレートの上で立ったかを見るのに使う） */
+  knockStands = 0;
+
+  /** 跳ねられない（足焼きで底が焼けた）：跳ねる指示でも這う */
+  noHop = false;
+  /**
+   * 移動できない（足焼きで底が焼けた）：行き先の指示を受け付けない（うろつきもしない）。自分から体勢も変えない
+   * （腹ばい・仰向けになる・起き上がる・寝返る）。つつかれて倒れる・転がるのは受け身なので起きる（倒れたら起き上がれない）
+   */
+  immobile = false;
+
   /** 行き先を行ける範囲の内側へ寄せる（マップに壁があるとき。Yukkuri が渡す） */
   limit: ((p: Vector3) => void) | null = null;
 
   /** 行き先を決める。mode を渡すと、そこへ向かう間だけその移動方法にする（跳ねられない体型は這う） */
   moveTo(x: number, z: number, mode: MoveMode | null = null): void {
+    if (this.immobile) {
+      this.stop();
+      return;
+    }
     this.target.set(x, 0, z);
     this.limit?.(this.target);
     this.targetMode = mode;
@@ -638,6 +673,11 @@ export class Locomotion {
     this.hasTarget = false;
     this.targetMode = null;
     this.deferred = false;
+  }
+
+  /** ほかの動きが移動を保留しているか（hold から release まで） */
+  get held(): boolean {
+    return this.holding;
   }
 
   /** ほかの動きを始める：今の移動をやめ、終わるまで動かない */
@@ -799,6 +839,7 @@ export class Locomotion {
           const cmdUp = this._v.set(0, 1, 0).applyQuaternion(this.poseCmd).y;
           if (cmdUp > Math.cos(KNOCK_STAND)) {
             this.knockQueue = 0;
+            this.knockStands++;
             this.riseGrace = RISE_GRACE;
             this.go('recover');
           } else this.fallOver();
@@ -1101,7 +1142,7 @@ export class Locomotion {
   private moveState(): State {
     const mode = this.targetMode ?? this.params.mode;
     if (this.moru || mode === 'moru') return 'moru';
-    return mode === 'hop' && this.params.canHop ? 'crouch' : 'crawl';
+    return mode === 'hop' && this.params.canHop && !this.noHop ? 'crouch' : 'crawl';
   }
 
   /**

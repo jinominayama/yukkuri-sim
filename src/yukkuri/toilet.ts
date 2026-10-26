@@ -77,7 +77,8 @@ export class ToiletTrip {
   start(): boolean {
     const y = this.y;
     const toilet = y.stage?.toilet;
-    if (!toilet) return y.dropping.start();
+    // といれがない・足焼きで移動できないときは、その場でする
+    if (!toilet || y.locomotion.immobile) return y.dropping.start();
     if (this.active || y.dropping.active || y.feeding.active || y.exercise.active || y.vomit.active || y.rest.fainting) return false;
     y.rest.wake(true);
     const loco = y.locomotion;

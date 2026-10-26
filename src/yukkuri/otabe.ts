@@ -85,6 +85,7 @@ export class Otabe {
   start(): boolean {
     const y = this.y;
     if (this.active || y.death.active || y.rest.fainting) return false;
+    if (y.locomotion.isLying && y.stuck()) return false; // 足焼きで移動できず寝転がっていれば、起き上がれない
     y.feeding.cancel();
     y.exercise.cancel();
     y.moru.stop();

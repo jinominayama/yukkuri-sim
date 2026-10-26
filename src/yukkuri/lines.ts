@@ -21,6 +21,7 @@ export type LineKey =
   | 'boxGo' | 'boxPush' | 'boxDone' | 'boxStuck' | 'boxBump'
   | 'dishNone' | 'dishEmpty' | 'waterNone'
   | 'cleanNoToilet' | 'cleanNone' | 'cleanPick' | 'cleanDone'
+  | 'grillStart' | 'grillScream' | 'grillNoHop' | 'grillNoMove' | 'grillAfter' | 'grillStuck' | 'grillEscape'
   | 'declarePoo' | 'declareExercise' | 'declareMeal' | 'declareSleep' | 'declareDrink' | 'declareClean'
   | 'greetYukkuri' | 'greetEatMe' | 'greetLast' | 'greetPlace'
   | 'dyingGasp';
@@ -88,6 +89,13 @@ const COMMON: Lines = {
   cleanNone: ['おといれのそとにはなにもないよ！'],
   cleanPick: ['ゆぅ…くさいよ…', 'ゆげぇ…', 'ゆっくりできないよ…', 'がまんするよ…'],
   cleanDone: ['ゆぅ…きれいになったよ…', 'ゆっくりおそうじできたよ…'],
+  grillStart: ['ゆ゛っ！？あぢゅい！あぢゅいよおおお！', 'ゆぎゃああああ！？'],
+  grillScream: ['あぢゅい！あぢゅいいい！', 'ゆぎゃああああ！', 'やめてね！やめてねえええ！', 'あんよさんがあああ！', 'ゆっぐりでぎないいい！', 'だずげでえええ！'],
+  grillNoHop: ['あんよさんが…ぴょんぴょんできないよおお！', 'ゆぐっ…あんよがいうこときかないよ…！'],
+  grillNoMove: ['うごけないよ…！あんよさんがうごかないよおお！', 'ゆ゛…あんよさん…ゆっくりしてね…！'],
+  grillAfter: ['ゆっぐ…ゆっぐ…あんよさんが…', 'いだいよ…あんよがいだいよ…'],
+  grillStuck: ['ゆぅ…あんよさんがうごかないよ…', 'うごけないよ…'],
+  grillEscape: ['あぢゅい！ごーろごーろするよ！', 'ゆわあああ！あぢゅいいい！'],
   boxBump: ['ゆっ！？はこさんがあるよ…', 'とおれないよ…', 'ゆぅ…じゃまだよ…'],
   declarePoo: ['うんうんするよ！'],
   declareExercise: ['うんうんたいそうはじまるよ！'],
@@ -161,6 +169,13 @@ const MARISA_NOZE: Partial<Lines> = {
   cleanNone: ['おといれのそとにはなにもないのぜ！'],
   cleanPick: ['ゆぅ…くさいのぜ…', 'ゆげぇ…', 'ゆっくりできないのぜ…', 'がまんするのぜ…'],
   cleanDone: ['ゆぅ…きれいになったのぜ…', 'ゆっくりおそうじできたのぜ…'],
+  grillStart: ['ゆ゛っ！？あぢゅいのぜ！あぢゅいのぜええ！', 'ゆぎゃああああ！？'],
+  grillScream: ['あぢゅい！あぢゅいのぜええ！', 'ゆぎゃああああ！', 'やめるのぜ！やめるのぜええ！', 'あんよさんがあああ！', 'ゆっぐりでぎないのぜえ！', 'だずげでほしいのぜええ！'],
+  grillNoHop: ['あんよさんが…ぴょんぴょんできないのぜ！', 'ゆぐっ…あんよがいうこときかないのぜ…！'],
+  grillNoMove: ['うごけないのぜ…！あんよさんがうごかないのぜ！', 'ゆ゛…あんよさん…ゆっくりするのぜ…！'],
+  grillAfter: ['ゆっぐ…ゆっぐ…あんよさんが…', 'いだいのぜ…あんよがいだいのぜ…'],
+  grillStuck: ['ゆぅ…あんよさんがうごかないのぜ…', 'うごけないのぜ…'],
+  grillEscape: ['あぢゅい！ごーろごーろするのぜ！', 'ゆわあああ！あぢゅいのぜええ！'],
   boxBump: ['ゆっ！？はこさんがじゃまなのぜ…', 'とおれないのぜ…', 'ゆぅ…どくのぜ…'],
   declarePoo: ['うんうんするのぜ！'],
   declareExercise: ['うんうんたいそうはじまるのぜ！'],

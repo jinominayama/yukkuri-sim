@@ -120,6 +120,7 @@ export class Exercise {
   start(prone?: boolean): boolean {
     const y = this.y;
     if (this.active || y.feeding.active || y.dropping.active || y.vomit.active || y.rest.fainting) return false;
+    if (y.stuck()) return false; // 足焼きで移動できなければ、体勢を変える体操はしない
     y.rest.wake(true);
     const loco = y.locomotion;
     loco.hold();

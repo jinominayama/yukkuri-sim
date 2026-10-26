@@ -147,6 +147,10 @@ export class Poke {
   private pushedLying = false;
   /** 最後に押されてからの時間（秒） */
   private sincePush = 0;
+  /** 最後につつかれた・叩かれてからの時間（秒） */
+  get sincePoke(): number {
+    return this.sincePush;
+  }
   readonly params: PokeParams = { ...DEFAULT_POKE, ...loadJSON<Partial<PokeParams>>(STORAGE_KEY) };
   /** 文字を出す向き（見る人から見て左右交互。重ならないように） */
   private side = 1;

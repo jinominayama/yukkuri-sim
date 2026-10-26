@@ -30,6 +30,7 @@ import { Home } from './home';
 import { DishEat } from './dishEat';
 import { ToiletTrip } from './toilet';
 import { Cleanup } from './cleanup';
+import { Grill } from './grill';
 import type { Stage } from '../world/Stage';
 import { Voice, type LineKey } from './lines';
 import { faceFrame, TextFx } from './fx';
@@ -130,6 +131,8 @@ export class Yukkuri {
   readonly toilet: ToiletTrip;
   /** といれへ運ぶ（といれの外のうんうん・吐いた餡子を、口でくわえてといれへ。うんうんは 3 回・餡子は 2 回に分けて） */
   readonly cleanup: Cleanup;
+  /** 足焼き（ホットプレートに乗せて焼く。焼いた時間で跳ねられない・移動できない・死ぬ。ホットプレートと湯気は grill.object） */
+  readonly grill: Grill;
   /** おうち（おうちせんげんをした場所。巣作りなどの起点。画面には出さない） */
   readonly home = new Home();
   /** セリフの口調（キャラクターごとに選ぶ。保存する） */
@@ -197,6 +200,7 @@ export class Yukkuri {
     this.dishEat = new DishEat(this);
     this.toilet = new ToiletTrip(this);
     this.cleanup = new Cleanup(this);
+    this.grill = new Grill(this);
     this.dropping = new Dropping(this);
     this.dropping.usePreset(this.presetId);
     this.exercise = new Exercise(this);
@@ -244,6 +248,17 @@ export class Yukkuri {
     this.restHeight = maxY - minY;
     this.body.setHeadWeights(this.headWeights());
     this.bodyMaterial.uniforms.uBodyHeight.value = this.restHeight;
+    // 焦げ（足焼き）を静止形状の底から測るための、模様用の静止座標の底と高さ
+    {
+      const ra = this.skin.geometry.getAttribute('aRest').array as Float32Array;
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 1; i < ra.length; i += 3) {
+        lo = Math.min(lo, ra[i]);
+        hi = Math.max(hi, ra[i]);
+      }
+      this.bodyMaterial.uniforms.uRestMinY.value = lo;
+      this.bodyMaterial.uniforms.uRestH.value = Math.max(1e-3, hi - lo);
+    }
     this.placeFace();
     this.outfit?.rebuild();
   }
@@ -402,6 +417,22 @@ export class Yukkuri {
     return this.voice.line(key);
   }
 
+  /**
+   * 足焼きで移動できないか。できなければ「うごけないよ…」と言って true（歩いて寄る動きは始めない。続けて押されても言うのは 1.5 秒に 1 回）
+   */
+  stuck(): boolean {
+    if (!this.locomotion.immobile) return false;
+    const now = performance.now();
+    if (now - this.stuckSaidAt > 1500) {
+      this.stuckSaidAt = now;
+      const R = this.shape.radius;
+      const pos = new THREE.Vector3(this.center.x, this.center.y + this.height * 0.5 + R * 0.45, this.center.z);
+      this.texts.say(this.line('grillStuck'), pos, R * 0.2, 1.8, new THREE.Vector3(0, R * 0.15, 0));
+    }
+    return true;
+  }
+  private stuckSaidAt = -Infinity;
+
   /** 点 point を方向 dir につつく（へこんで弾み、驚いた顔をする） */
   poke(point: THREE.Vector3, dir: THREE.Vector3, strength: number): void {
     this.poking.start(point, dir, strength);
@@ -467,6 +498,7 @@ export class Yukkuri {
     this.dishEat.update(dt);
     this.toilet.update(dt); // といれへの行き先・身ぶりも移動の処理より先に指示する
     this.cleanup.update(dt);
+    this.grill.update(dt); // 焼いている間の身ぶりも移動の処理より先に指示する
     this.greet.update(dt); // 宣言を言い終えたら動作を始める（動作の処理は次のステップから）
     this.otabe.update(dt); // 帽子を脱いでから割れる（割れるまでは移動を止めておく）
     this.vomit.update(dt); // 吐くときの身ぶりも移動の処理より先に指示する

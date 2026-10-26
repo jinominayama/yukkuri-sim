@@ -143,6 +143,7 @@ export class Puku {
   start(): boolean {
     const y = this.y;
     if ((this.phase !== 'none' && this.phase !== 'deflate') || this.othersBusy() || y.rest.fainting) return false;
+    if (y.locomotion.isLying && y.stuck()) return false; // 足焼きで移動できず寝転がっていれば、起き上がれない
     y.rest.wake(true);
     const loco = y.locomotion;
     loco.stop();

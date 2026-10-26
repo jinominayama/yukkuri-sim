@@ -181,6 +181,7 @@ export class PushBox {
   push(): boolean {
     const y = this.y;
     if (!this.placed || this.busy || y.rest.fainting || y.branch.busy || y.forage.busy) return false;
+    if (y.stuck()) return false;
     y.rest.wake(true);
     if (y.locomotion.isLying) y.getUp();
     // 押す向き：体から箱への向きに一番近い面の向き

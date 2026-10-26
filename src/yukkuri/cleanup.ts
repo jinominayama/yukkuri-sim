@@ -102,6 +102,7 @@ export class Cleanup {
       this.say(why, 1.8);
       return false;
     }
+    if (y.stuck()) return false;
     y.rest.wake(true);
     if (y.locomotion.isLying) y.getUp();
     this.moved = 0;

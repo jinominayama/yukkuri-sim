@@ -94,6 +94,14 @@ export class BraidPick {
   start(hooks: PickHooks, stay = false): boolean {
     const y = this.y;
     if (this.active || !y.outfit.braid || y.rest.fainting) return false;
+    // 足焼きで移動できなければ、三つ編みが届く所の物だけ拾う（寄れないので）。寝転がっていれば起き上がれないので拾わない
+    if (y.locomotion.immobile && y.locomotion.isLying && y.stuck()) return false;
+    if (y.locomotion.immobile) {
+      const g = hooks.grabPoint();
+      const dir = new THREE.Vector3(g.x - y.center.x, 0, g.z - y.center.z);
+      const d = dir.length();
+      if (!stay && !(d > 1e-6 && d < bodyExtent(y, dir.divideScalar(d)) + y.shape.radius * STAY_REACH) && y.stuck()) return false;
+    }
     y.rest.wake(true);
     if (y.locomotion.isLying) y.getUp();
     this.hooks = hooks;

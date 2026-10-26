@@ -43,6 +43,11 @@ const fragmentShader = /* glsl */ `
   uniform float uSoftness;
   uniform float uRim;
   uniform float uContactShade;
+  // 焦げ（足焼き）：焦げの強さ 0〜1 と、焦げる高さ（静止形状の底から、高さに対する比）。静止形状の底と高さ
+  uniform float uBurn;
+  uniform float uBurnTop;
+  uniform float uRestMinY;
+  uniform float uRestH;
   uniform float uFace;
   // 顔：頭の中心から見た方向を、表面に沿った長さ（頭の半径単位）の顔座標にして絵を貼る
   uniform sampler2D uFaceTex;
@@ -66,6 +71,17 @@ const fragmentShader = /* glsl */ `
 
     // 接地付近をわずかに暗く（重みの表現）
     col *= mix(1.0 - uContactShade, 1.0, smoothstep(0.0, 0.2, vHeight));
+
+    // 足焼きの焦げ：底から uBurnTop までを、焼けるほどこんがり茶色から黒っぽく（静止形状の高さで決めるので、寝転んでも底に付いたまま）
+    if (uBurn > 0.0) {
+      float hr = (vRest.y - uRestMinY) / uRestH;
+      float m = (1.0 - smoothstep(uBurnTop * 0.55, uBurnTop, hr)) * min(1.0, uBurn * 2.5);
+      // 色は線形の値（こんがり茶色 #a8601f・黒っぽい焦げ #2c1509。sRGB の値をそのまま書くと明るすぎて肌と見分けがつかなかった）
+      vec3 brown = vec3(0.39, 0.117, 0.014);
+      vec3 charred = vec3(0.025, 0.0075, 0.003);
+      vec3 burnt = mix(brown, charred, smoothstep(0.35, 1.0, uBurn) * (1.0 - smoothstep(0.0, uBurnTop, hr) * 0.5));
+      col = mix(col, burnt * (0.75 + 0.25 * h), m);
+    }
 
     // 縁を明るく（柔らかい皮の透け感）
     vec3 v = normalize(cameraPosition - vPosW);
@@ -104,6 +120,10 @@ export function createToonMaterial(colors: ToonColors = DEFAULT_SKIN): THREE.Sha
       uSoftness: { value: 0.06 },
       uRim: { value: 0.18 },
       uContactShade: { value: 0.08 },
+      uBurn: { value: 0 },
+      uBurnTop: { value: 0.1 },
+      uRestMinY: { value: -0.5 },
+      uRestH: { value: 1 },
       uBodyHeight: { value: 1 },
       uFace: { value: 1 },
       uFaceTex: { value: null },

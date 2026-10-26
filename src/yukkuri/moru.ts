@@ -183,6 +183,7 @@ export class Moru {
   /** その場で振り始める。食べている・うんうん・体操・吐いている最中なら何もしない。寝転がっていれば起き上がってから */
   start(): boolean {
     if (this.y.rest.fainting) return false;
+    if (this.y.stuck()) return false; // 足焼きで移動できなければ、お尻を突き上げる体勢にもならない
     this.y.rest.wake(true);
     const y = this.y;
     if (this.busy()) return false;

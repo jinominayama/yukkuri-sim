@@ -112,6 +112,7 @@ export class DishEat {
   start(mode: Mode = 'eat'): boolean {
     const y = this.y;
     if (this.active || y.feeding.active || y.rest.fainting || y.death.active || y.otabe.active) return false;
+    if (y.stuck()) return false;
     const why = this.reason(mode);
     if (why) {
       this.say(why);

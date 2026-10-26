@@ -179,9 +179,10 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   act.add({ f: () => y.impulse(1.2, 2.6, 0) }, 'f').name('横に跳ねさせる');
 
   const pose = basic.addFolder('体勢');
-  pose.add({ f: () => y.locomotion.lieDown('prone') }, 'f').name('腹ばいになる');
-  pose.add({ f: () => y.locomotion.lieDown('supine') }, 'f').name('仰向けになる');
-  pose.add({ f: () => y.getUp() }, 'f').name('起き上がる');
+  // 足焼きで移動できなければ、体勢は変えない（「うごけないよ…」と言う）
+  pose.add({ f: () => y.stuck() || y.locomotion.lieDown('prone') }, 'f').name('腹ばいになる');
+  pose.add({ f: () => y.stuck() || y.locomotion.lieDown('supine') }, 'f').name('仰向けになる');
+  pose.add({ f: () => y.stuck() || y.getUp() }, 'f').name('起き上がる');
 
   // 眠る（立ったまま柔らかくなって眠る。つつく等で起きる）・気絶（どの姿勢でもその場で柔らかくなり、しばらくすると気がつく）
   // あいさつ：動作の前の宣言（切り替え）と、挨拶のボタン
@@ -197,7 +198,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   // おうちせんげん：「ここを○○のゆっくりぷれいすにするよ！」と言い、軽く跳ねて胸を張り、正面の上を見上げる（ボタンの名前だけ短く）
   greet.add({ f: () => y.greet.declareHome(canAct) }, 'f').name('おうちせんげん');
   /** 宣言してから始める動作（食べる・うんうん・たいそう・眠る）を、今始められるか（ほかの動作の途中・気絶中は始めない。眠っていれば宣言で起こす） */
-  const canAct = () => !(y.feeding.active || y.dropping.active || y.toilet.active || y.cleanup.active || y.exercise.active || y.vomit.active || y.rest.fainting);
+  const canAct = () => !(y.feeding.active || y.dropping.active || y.toilet.active || y.cleanup.active || y.grill.active || y.exercise.active || y.vomit.active || y.rest.fainting);
 
   const rest = basic.addFolder('眠る・気絶');
   // 眠るときは宣言してから（起こすときは宣言しない）
@@ -320,6 +321,14 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   const forageView = { count: '' };
   forage.add(forageView, 'count').name('帽子の餌').disable().listen();
   setInterval(() => (forageView.count = `つば ${y.forage.onHat} / 8・中 ${y.forage.inHat} / ${STASH_MAX}（地面 ${y.forage.onGround}）`), 200);
+
+  // ホットプレート（足焼き）：乗せて焼き、「下ろす」まで焼く。焼いた時間で跳ねられない・移動できない・死ぬ（戻すのはページの読み直し）
+  const grill = tools.addFolder('ホットプレート');
+  grill.add({ f: () => y.grill.start() }, 'f').name('乗せて焼く');
+  grill.add({ f: () => y.grill.stop() }, 'f').name('下ろす');
+  const grillView = { state: '' };
+  grill.add(grillView, 'state').name('焼き加減').disable().listen();
+  setInterval(() => (grillView.state = y.grill.stateLabel), 200);
 
   // ぷくー：体をふくらませて威嚇する（ボタンで始める。もう一度押すとしぼむ）
   const puku = gesture.addFolder('ぷくー');
@@ -518,6 +527,13 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   noLock(stressTune.add(y.stress.params.meal, 'normal', 0, 100, 1).name('食べて減る(中間品質)').onChange(saveStress));
 
   // つつく・叩く：倒れる・転がるまでの回数（全体で 1 つ。保存する）
+  // 足焼き：焼いた時間の合計（秒）で、跳ねられない・移動できない・死ぬ
+  const grillTune = tune.addFolder('足焼き');
+  const saveGrill = () => y.grill.save();
+  noLock(grillTune.add(y.grill.params, 'noHop', 1, 120, 1).name('跳ねられなくなる(秒)').onChange(saveGrill));
+  noLock(grillTune.add(y.grill.params, 'noMove', 1, 180, 1).name('移動できなくなる(秒)').onChange(saveGrill));
+  noLock(grillTune.add(y.grill.params, 'death', 1, 300, 1).name('焼け死ぬ(秒)').onChange(saveGrill));
+
   const pokeTune = tune.addFolder('つつく・叩く');
   const savePoke = () => y.poking.save();
   noLock(pokeTune.add(y.poking.params, 'toppleHits', 1, 8, 0.5).name('立っていて倒れるまでの回数').onChange(savePoke));

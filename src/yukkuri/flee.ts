@@ -91,7 +91,7 @@ export class Flee {
   private begin(): void {
     const y = this.y;
     this.nearFor = 0;
-    const crawl = y.stress.value >= STRESS_CRAWL || !y.move.canHop;
+    const crawl = y.stress.value >= STRESS_CRAWL || !y.move.canHop || y.locomotion.noHop;
     this.say(y.line(crawl ? 'fleeCrawl' : 'fleeHop'));
     if (!y.face.override) {
       showFace(y, crawl ? FACE_CRAWL : FACE_HOP, crawl ? { tears: 'few' } : {});
@@ -109,7 +109,7 @@ export class Flee {
     const loco = y.locomotion;
     const to = this.destination();
     // 跳ねる・這うは、そのときのストレスで決める（起き上がっている間に変わっていることもある）
-    const mode: MoveMode = y.stress.value >= STRESS_CRAWL || !y.move.canHop ? 'crawl' : 'hop';
+    const mode: MoveMode = y.stress.value >= STRESS_CRAWL || !y.move.canHop || y.locomotion.noHop ? 'crawl' : 'hop';
     loco.moveTo(to.x, to.z, mode);
     this.dest.copy(loco.target);
     this.phase = 'moving';
@@ -165,6 +165,6 @@ export class Flee {
   private busy(): boolean {
     const y = this.y;
     return y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.moru.active || y.rest.active || y.puku.active
-      || y.cleanup.active || y.toilet.active;
+      || y.cleanup.active || y.toilet.active || y.grill.active || y.locomotion.immobile;
   }
 }
