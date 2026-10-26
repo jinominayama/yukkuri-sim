@@ -98,7 +98,8 @@ export class Cage {
         color: '#d9eef5', map: streaks, transparent: true, opacity: GLASS_OPACITY, depthWrite: false, side: THREE.DoubleSide,
       });
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, H), m);
-      mesh.position.set(x, H / 2, z);
+      // 板は枠の厚みの真ん中に置く（縁は枠の中に隠れる）。壁の面ちょうどに置くと枠の内側の面と重なり、縁がちらついた
+      mesh.position.set(x + Math.sin(a) * FRAME / 2, H / 2, z + Math.cos(a) * FRAME / 2);
       mesh.rotation.y = a;
       mesh.renderOrder = 10;
       this.object.add(mesh);
@@ -112,20 +113,25 @@ export class Cage {
       });
     }
 
-    // 枠：下の縁は太め、上の縁と角の柱は細め
+    // 枠：下の縁は太め、上の縁と角の柱は細め。柱は上の縁の高さまで伸ばす。
+    // 縁の棒は柱の中まで差し込み（継ぎ目に輪郭線がのぞかないように）、柱より少し細くして面をずらす
+    // （棒どうし・棒と柱が角で同じ所に面を持つと、ちらついた）
     const addFrame = (g: THREE.BufferGeometry) => {
       this.disposables.push(g);
       this.object.add(withOutline(g, frameMat, outline));
     };
     const W2 = CAGE_W / 2, D2 = CAGE_D / 2;
-    for (const [y, t] of [[FRAME * 1.2, FRAME * 2.4], [H, FRAME]] as const) {
+    const BOTTOM = FRAME * 1.2, TOP = H + FRAME / 2;
+    const BAR = FRAME * 0.96;
+    for (const [y0, y1] of [[0, BOTTOM], [H - BAR / 2, H + BAR / 2]] as const) {
+      const t = y1 - y0, cy = (y0 + y1) / 2;
       for (const s of [-1, 1]) {
-        addFrame(new THREE.BoxGeometry(CAGE_W + FRAME * 2, t, FRAME).translate(0, y - t / 2 + (y === H ? t / 2 : 0), s * (D2 + FRAME / 2)));
-        addFrame(new THREE.BoxGeometry(FRAME, t, CAGE_D + FRAME * 2).translate(s * (W2 + FRAME / 2), y - t / 2 + (y === H ? t / 2 : 0), 0));
+        addFrame(new THREE.BoxGeometry(CAGE_W + FRAME, t, BAR).translate(0, cy, s * (D2 + FRAME / 2)));
+        addFrame(new THREE.BoxGeometry(BAR, t, CAGE_D + FRAME).translate(s * (W2 + FRAME / 2), cy, 0));
       }
     }
     for (const sx of [-1, 1]) {
-      for (const sz of [-1, 1]) addFrame(new THREE.BoxGeometry(FRAME, H, FRAME).translate(sx * (W2 + FRAME / 2), H / 2, sz * (D2 + FRAME / 2)));
+      for (const sz of [-1, 1]) addFrame(new THREE.BoxGeometry(FRAME, TOP, FRAME).translate(sx * (W2 + FRAME / 2), TOP / 2, sz * (D2 + FRAME / 2)));
     }
 
     // 餌皿・水皿（当たる）
