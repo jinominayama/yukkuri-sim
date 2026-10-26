@@ -87,6 +87,17 @@ export class Stage {
     return this.cage?.waterDish ?? null;
   }
 
+  /** といれ（マップごとに形が違う。今は飼育ケースの砂のトレイだけ）：中心と横・奥行き（m）。なければ null */
+  get toilet(): { x: number; z: number; w: number; d: number } | null {
+    return this.cage?.toilet ?? null;
+  }
+
+  /** 点（x, z）がといれの中か（縁から margin m より内側） */
+  inToilet(x: number, z: number, margin = 0): boolean {
+    const t = this.toilet;
+    return !!t && Math.abs(x - t.x) <= t.w / 2 - margin && Math.abs(z - t.z) <= t.d / 2 - margin;
+  }
+
   /** 置いてある物（皿など。体が乗れない所）：中心と半径（m） */
   get props(): readonly { x: number; z: number; r: number }[] {
     return this.cage?.props ?? [];

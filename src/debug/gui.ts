@@ -197,7 +197,7 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
   // おうちせんげん：「ここを○○のゆっくりぷれいすにするよ！」と言い、軽く跳ねて胸を張り、正面の上を見上げる（ボタンの名前だけ短く）
   greet.add({ f: () => y.greet.declareHome(canAct) }, 'f').name('おうちせんげん');
   /** 宣言してから始める動作（食べる・うんうん・たいそう・眠る）を、今始められるか（ほかの動作の途中・気絶中は始めない。眠っていれば宣言で起こす） */
-  const canAct = () => !(y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.rest.fainting);
+  const canAct = () => !(y.feeding.active || y.dropping.active || y.toilet.active || y.exercise.active || y.vomit.active || y.rest.fainting);
 
   const rest = basic.addFolder('眠る・気絶');
   // 眠るときは宣言してから（起こすときは宣言しない）
@@ -233,7 +233,8 @@ export function createDebugGui(y: Yukkuri, view: ViewSettings): GUI {
 
   // うんうん：体の後ろから餡子を絞り出す。出したものは「片付ける」まで残る
   const poo = living.addFolder('うんうん');
-  poo.add({ f: () => y.greet.declare('declarePoo', canAct, () => y.dropping.start()) }, 'f').name('うんうんする');
+  // といれのある場所（飼育ケース）では、といれへ行ってする。ない場所ではその場で
+  poo.add({ f: () => y.greet.declare('declarePoo', canAct, () => y.toilet.start()) }, 'f').name('うんうんする');
   // うんうんたいそう：歌に合わせて揺れる・伸びる・ひねる・反ってから、うんうんを出す。
   // 最後に出すときの体勢（デバッグ用）：ランダム・仰向け（後ろへ反る）・腹ばい（お尻を突き上げる）
   const exerciseOpts = { pose: 'random' };

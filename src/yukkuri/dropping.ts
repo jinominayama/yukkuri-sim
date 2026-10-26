@@ -89,6 +89,8 @@ const MAX_PILES = 12;
 /** 断面の分割数と、道筋に沿った輪の間隔（幅に対する比） */
 const SIDES = 24;
 const RING_STEP = 0.24;
+/** 道筋の点の数：出口から地面に寝そべる所まで（この番号の点が寝そべる所の始まり） */
+const PATH_DROP = 16;
 /** 地面から浮かせる高さ（ちらつき防止） */
 const FLOOR = 0.003;
 
@@ -119,6 +121,8 @@ interface Pile {
   exitS: number;
   /** 断面の横向き（出す向きに直交する水平の向き。道筋は出す向きを含む縦の面の中にあるので一定） */
   side: THREE.Vector3;
+  /** といれの中に出したか（汚れとして数えない：そばにいてもストレスがたまらず、嫌がって離れない） */
+  toilet: boolean;
 }
 
 interface Ring {
@@ -279,6 +283,10 @@ export class Dropping {
       return;
     }
     const pile = this.makePile(pos, nrm);
+    // といれの中に出したか：地面に寝そべる所の始まりと先が、どちらもといれの中
+    const stage = y.stage;
+    const g = pile.pts[PATH_DROP], e = pile.pts[pile.pts.length - 1];
+    pile.toilet = !!stage && stage.inToilet(g.x, g.z) && stage.inToilet(e.x, e.z);
     this.piles.push(pile);
     this.object.add(pile.group);
     while (this.piles.length > MAX_PILES) this.dispose(this.piles.shift()!);
@@ -289,12 +297,24 @@ export class Dropping {
   }
 
   /**
-   * 出したもののどれかが、水平に見て点 c から radius 以内にあるか（寝転んだ体が起き上がるときに貫通しそうか）。
-   * 体の中に隠れている根元は数えない
+   * 今の体勢で出すと、地面に寝そべる所の始まりと先がどこに来るか（といれに入るように位置を合わせるのに使う）。
+   * 出口を求められないときは null
    */
-  near(c: THREE.Vector3, radius: number): boolean {
+  predict(): { start: THREE.Vector3; end: THREE.Vector3 } | null {
+    const pos = new THREE.Vector3(), nrm = new THREE.Vector3();
+    if (!this.exitPoint(false, pos, nrm)) return null;
+    const p = this.makePile(pos, nrm);
+    p.geometry.dispose();
+    return { start: p.pts[PATH_DROP].clone(), end: p.pts[p.pts.length - 1].clone() };
+  }
+
+  /**
+   * 出したもののどれかが、水平に見て点 c から radius 以内にあるか（寝転んだ体が起き上がるときに貫通しそうか）。
+   * 体の中に隠れている根元は数えない。といれの中のものは all のときだけ数える（汚れとしては数えない）
+   */
+  near(c: THREE.Vector3, radius: number, all = false): boolean {
     for (const p of this.piles) {
-      if (p === this.current) continue;
+      if (p === this.current || (p.toilet && !all)) continue;
       const from = p.detached >= 0 ? p.exitS : p.ground;
       for (let i = 0; i < p.pts.length; i += 2) {
         if (p.len[i] < from) continue;
@@ -305,10 +325,10 @@ export class Dropping {
     return false;
   }
 
-  /** 出したものの道筋の点（水平）を順に渡す。出している最中のものと、体の中に隠れている根元は数えない */
+  /** 出したものの道筋の点（水平）を順に渡す。出している最中のもの・体の中に隠れている根元・といれの中のものは数えない */
   forEachPoint(f: (x: number, z: number) => void): void {
     for (const p of this.piles) {
-      if (p === this.current) continue;
+      if (p === this.current || p.toilet) continue;
       const from = p.detached >= 0 ? p.exitS : p.ground;
       for (let i = 0; i < p.pts.length; i += 2) if (p.len[i] >= from) f(p.pts[i].x, p.pts[i].z);
     }
@@ -409,7 +429,7 @@ export class Dropping {
     const c2 = g.clone().addScaledVector(out, -w * 0.5).add(new THREE.Vector3(0, drop * 0.5, 0));
     const end = g.clone().addScaledVector(out, LENGTH * R);
     const raw: THREE.Vector3[] = [];
-    const n1 = 16;
+    const n1 = PATH_DROP;
     for (let i = 0; i < n1; i++) raw.push(bezier(a, c1, c2, g, i / n1));
     const n2 = 48;
     for (let i = 0; i <= n2; i++) raw.push(g.clone().lerp(end, i / n2));
@@ -424,7 +444,7 @@ export class Dropping {
     group.add(new THREE.Mesh(geometry, this.outline), new THREE.Mesh(geometry, this.material));
     group.children.forEach((m) => (m.frustumCulled = false));
     const side = new THREE.Vector3(0, 1, 0).cross(out).normalize();
-    return { group, geometry, pts: raw, len, ground: len[n1], shown: 0, settle: -1, w, h, side, detached: -1, exitS };
+    return { group, geometry, pts: raw, len, ground: len[n1], shown: 0, settle: -1, w, h, side, detached: -1, exitS, toilet: false };
   }
 
   /**

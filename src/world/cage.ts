@@ -30,6 +30,12 @@ const GLASS_NEAR_OPACITY = 0.15;
 const FOOD_DISH = { x: 2.55, z: -2.1, r: 0.34, h: 0.1 };
 const WATER_DISH = { x: 3.85, z: -1.95, r: 0.6, h: 0.12 };
 const BED = { x: -3.0, z: -1.5, w: 3.4, d: 2.6, t: 0.05 };
+/**
+ * といれ：砂を入れた浅いトレイ（指示）。手前の左（寝床の手前）。横 w × 奥行き d、縁の高さ h・厚み t（m）。
+ * 体ごと乗れる（当たらない）。砂は床とほぼ同じ高さ（うんうんの塊は地面に寝そべるので、砂が高いと埋もれる）
+ */
+const TOILET = { x: -3.5, z: 1.75, w: 1.9, d: 1.5, h: 0.07, t: 0.05 };
+const TOILET_COLORS = { lit: '#bfe3c8', shade: '#9fcfad', deep: '#79b08a', rim: '#f0fff4' };
 
 const FRAME_COLORS = { lit: '#8d969c', shade: '#6d757b', deep: '#545b60', rim: '#d6dde2' };
 const FOOD_DISH_COLORS = { lit: '#fbf3e4', shade: '#eadcc4', deep: '#cdb99a', rim: '#ffffff' };
@@ -63,6 +69,8 @@ export class Cage {
   };
   /** 水皿：中心・半径と、水面の高さ・半径（m） */
   readonly waterDish = { x: WATER_DISH.x, z: WATER_DISH.z, r: WATER_DISH.r, surfaceY: WATER_DISH.h * 0.72, surfaceR: WATER_DISH.r * 0.86 };
+  /** といれ（砂のトレイ）：中心と、横・奥行き（m。向きは軸にそろえる） */
+  readonly toilet = { x: TOILET.x, z: TOILET.z, w: TOILET.w, d: TOILET.d };
   /** 置いてある物（体が乗れない所）：餌皿・水皿の中心と半径 */
   readonly props = [FOOD_DISH, WATER_DISH].map((d) => ({ x: d.x, z: d.z, r: d.r }));
   private readonly floor: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
@@ -173,6 +181,23 @@ export class Cage {
     bed.position.set(BED.x, 0.001, BED.z);
     bed.rotation.y = 0.06;
     this.object.add(bed);
+
+    // といれ：角の丸い枠（縁）と、中の砂（床とほぼ同じ高さ。当たらない）
+    const trayMat = mat(TOILET_COLORS);
+    const trayGeo = trayRim(TOILET.w, TOILET.d, TOILET.h, TOILET.t);
+    const sandMat = new THREE.MeshBasicMaterial({ map: sandTexture() });
+    const sandGeo = new THREE.ShapeGeometry(roundRect(TOILET.w - TOILET.t * 2, TOILET.d - TOILET.t * 2, Math.min(TOILET.w, TOILET.d) * 0.14) as THREE.Shape, 10);
+    sandGeo.rotateX(-Math.PI / 2);
+    // 砂の絵は横 w・奥行き d に合わせる（ShapeGeometry の uv は形の座標そのままなので、0〜1 へ寄せる）
+    const uv = sandGeo.getAttribute('uv') as THREE.BufferAttribute;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / TOILET.w + 0.5, uv.getY(i) / TOILET.d + 0.5);
+    this.disposables.push(trayMat, trayGeo, sandMat, sandMat.map!, sandGeo);
+    const tray = withOutline(trayGeo, trayMat, outline);
+    const sand = new THREE.Mesh(sandGeo, sandMat);
+    sand.position.y = 0.0015;
+    tray.add(sand);
+    tray.position.set(TOILET.x, 0, TOILET.z);
+    this.object.add(tray);
   }
 
   setFloor(id: FloorId): void {
@@ -266,6 +291,42 @@ function stitch(w: number, d: number, t: number): THREE.BufferGeometry {
   g.rotateX(-Math.PI / 2);
   g.translate(0, t + 0.001, 0);
   return g;
+}
+
+/** といれの縁：角の丸い長方形の枠（外が横 w × 奥行き d、厚み t、高さ h。底が y = 0） */
+function trayRim(w: number, d: number, h: number, t: number): THREE.BufferGeometry {
+  const r = Math.min(w, d) * 0.18;
+  const s = roundRect(w, d, r) as THREE.Shape;
+  s.holes.push(roundRect(w - t * 2, d - t * 2, r - t, new THREE.Path()) as THREE.Path);
+  const bevel = t * 0.3;
+  const g = new THREE.ExtrudeGeometry(s, { depth: h - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel * 0.5, bevelSegments: 2, curveSegments: 10 });
+  g.rotateX(-Math.PI / 2);
+  g.translate(0, bevel, 0);
+  return g;
+}
+
+/** といれの砂：明るい灰色がかったベージュに、細かい粒（512 四方） */
+function sandTexture(): THREE.CanvasTexture {
+  const N = 512;
+  const c = document.createElement('canvas');
+  c.width = N;
+  c.height = N;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#e4dccb';
+  g.fillRect(0, 0, N, N);
+  let seed = 31;
+  const r = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const colors = ['#d2c8b2', '#f1ebdd', '#c6bba3', '#ebe3d2', '#b9ad94'];
+  for (let k = 0; k < 14000; k++) {
+    g.fillStyle = colors[Math.floor(r() * colors.length)];
+    g.beginPath();
+    g.arc(r() * N, r() * N, 0.8 + r() * 1.6, 0, Math.PI * 2);
+    g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
 }
 
 /** ガラスの映り込み：斜めの白い筋を数本（筋の所だけ濃い。地は薄く、ガラスの濃さを掛ける） */
