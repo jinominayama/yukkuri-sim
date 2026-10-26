@@ -88,7 +88,8 @@ export class Stress {
   /** 固定時間刻みで呼ぶ */
   update(dt: number): void {
     const y = this.y;
-    const busy = y.vomit.active || y.dropping.active;
+    // 吐いている・うんうんの最中・といれへ運んでいる間は、近くの汚れでたまらない（運ぶ間は拾うたびにたまる）
+    const busy = y.vomit.active || y.dropping.active || y.cleanup.active;
     // 体型を切り替えて下限が上がったら、すぐ下限まで上げる
     if (this.value < this.floor) this.value = this.floor;
     this.checkIn -= dt;

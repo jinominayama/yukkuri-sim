@@ -5,6 +5,7 @@ import { createAccessoryOutlineMaterial } from '../render/outlineMaterial';
 import type { PartSelection } from '../face/parts';
 import { loadJSON, saveJSON } from '../platform/storage';
 import { bodyFacing, pick, showFace, type Word } from './fx';
+import type { LooseDirt } from './dropping';
 import type { Yukkuri } from './Yukkuri';
 
 /**
@@ -99,7 +100,10 @@ const STRETCH_PER_SPEED = 0.25;
 const STRETCH_MAX = 1.6;
 /** 1 回分の塊の数の上限と、置いておく回数の上限（古いものから消す） */
 const MAX_LUMPS = 160;
-const MAX_HEAPS = 6;
+const MAX_HEAPS = 20;
+/** といれへ口で運ぶとき、1 回分を分ける数（指示）と、といれに置くとき寄せ集める倍率（水平の広がり） */
+export const ANKO_PIECES = 2;
+const PIECE_GATHER = 0.75;
 /** 塊の形のばらつき（形の型の数と、でこぼこの大きさ） */
 const SHAPES = 5;
 const BUMPS = 0.18;
@@ -146,6 +150,19 @@ interface Heap {
   /** 水たまりと、床に着いた塊の数 */
   pool: Lump | null;
   landed: number;
+  /** といれの中にある（汚れとして数えない）。といれへ運んで減った数と、分け方（ANKO_PIECES 組。初めて運ぶときに決める） */
+  toilet: boolean;
+  cut: number;
+  parts: Lump[][] | null;
+  /** 分けた一組（といれへ運んで置いたもの）。もう分けない（運ぶ途中でやめて外に置いたものは、次はまるごと 1 回で運ぶ） */
+  piece?: boolean;
+}
+
+/** 塊の位置の真ん中（地面の上） */
+function centroid(lumps: Lump[]): THREE.Vector3 {
+  const c = new THREE.Vector3();
+  for (const l of lumps) c.x += l.p.x, c.z += l.p.z;
+  return lumps.length ? c.divideScalar(lumps.length).setY(0) : c;
 }
 
 /** 0〜1 をなめらかに */
@@ -247,24 +264,100 @@ export class Vomit {
     return true;
   }
 
-  /** 床に着いた塊の位置（水平）を順に渡す。吐いている最中のものは数えない */
+  /** 床に着いた塊の位置（水平）を順に渡す。吐いている最中のもの・といれの中のものは数えない */
   forEachPoint(f: (x: number, z: number) => void): void {
     for (const h of this.heaps) {
-      if (h === this.current && this.active) continue;
+      if ((h === this.current && this.active) || h.toilet) continue;
       for (const l of h.lumps) if (l.rest >= 0) f(l.p.x, l.p.z);
     }
+  }
+
+  /** といれの中にある塊の位置（水平）を順に渡す（といれへ運んだ一組を置く所を選ぶのに使う） */
+  forEachToiletPoint(f: (x: number, z: number) => void): void {
+    for (const h of this.heaps) if (h.toilet) for (const l of h.lumps) f(l.p.x, l.p.z);
   }
 
   /** 吐いたもの（床に着いた塊）のどれかが、水平に見て点 c から radius 以内にあるか。吐いている最中のものは数えない */
   near(c: THREE.Vector3, radius: number): boolean {
     for (const h of this.heaps) {
-      if (h === this.current && this.active) continue;
+      if ((h === this.current && this.active) || h.toilet) continue;
       for (const l of h.lumps) {
         if (l.rest < 0) continue;
         if (Math.hypot(l.p.x - c.x, l.p.z - c.z) < radius + l.r) return true;
       }
     }
     return false;
+  }
+
+  /**
+   * といれの外にある吐いたもの（床に落ち着いた 1 回分）。広がりの長い向きで半分ずつ（ANKO_PIECES 組）に分けて、1 組ずつ持っていける
+   */
+  loose(): LooseDirt[] {
+    const out: LooseDirt[] = [];
+    for (const h of this.heaps) {
+      if (h.toilet || (h === this.current && this.active) || h.lumps.length === 0 || h.lumps.some((l) => l.rest < 0)) continue;
+      out.push({
+        next: () => {
+          const parts = this.partsOf(h);
+          return h.cut < parts.length && this.heaps.includes(h) ? centroid(parts[h.cut]) : null;
+        },
+        take: () => {
+          const parts = this.partsOf(h);
+          if (h.cut >= parts.length || !this.heaps.includes(h)) return null;
+          const part = parts[h.cut];
+          h.cut++;
+          h.lumps.splice(0, h.lumps.length, ...h.lumps.filter((l) => !part.includes(l)));
+          if (h.pool && part.includes(h.pool)) h.pool = null;
+          if (h.cut >= parts.length || h.lumps.length === 0) {
+            this.heaps.splice(this.heaps.indexOf(h), 1);
+            this.dispose(h);
+          } else h.dirty = true;
+          return (x, z, yaw) => this.placePiece(part, x, z, yaw);
+        },
+      });
+    }
+    return out;
+  }
+
+  /** 1 回分の塊を半分ずつに分ける：広がりの長い向きに並べて真ん中で切る。水たまりは後の組（最後に持っていく） */
+  private partsOf(h: Heap): Lump[][] {
+    if (h.parts) return h.parts;
+    if (h.piece) return (h.parts = [[...h.lumps]]);
+    const lumps = h.lumps.filter((l) => !l.pool);
+    const c = centroid(lumps);
+    let xx = 0, xz = 0, zz = 0;
+    for (const l of lumps) {
+      const dx = l.p.x - c.x, dz = l.p.z - c.z;
+      xx += dx * dx; xz += dx * dz; zz += dz * dz;
+    }
+    const a = 0.5 * Math.atan2(2 * xz, xx - zz);
+    const ax = Math.cos(a), az = Math.sin(a);
+    const sorted = [...lumps].sort((p, q) => (p.p.x - c.x) * ax + (p.p.z - c.z) * az - ((q.p.x - c.x) * ax + (q.p.z - c.z) * az));
+    const parts: Lump[][] = [];
+    for (let k = 0; k < ANKO_PIECES; k++) parts.push(sorted.slice(Math.floor((sorted.length * k) / ANKO_PIECES), Math.floor((sorted.length * (k + 1)) / ANKO_PIECES)));
+    if (h.pool) parts[parts.length - 1].push(h.pool);
+    h.parts = parts;
+    return parts;
+  }
+
+  /** 分けた 1 組を（x, z）に寄せ集めて置く（向き yaw に回す。水平の広がりは PIECE_GATHER 倍）。といれの中か外かは置いた所で決まる */
+  private placePiece(part: Lump[], x: number, z: number, yaw: number): void {
+    const c = centroid(part.filter((l) => !l.pool).length ? part.filter((l) => !l.pool) : part);
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    const geometry = new THREE.BufferGeometry();
+    const group = new THREE.Group();
+    group.add(new THREE.Mesh(geometry, this.outline), new THREE.Mesh(geometry, this.material));
+    group.children.forEach((m) => (m.frustumCulled = false));
+    const lumps = part.map((l) => {
+      const off = new THREE.Vector3(l.p.x - c.x, 0, l.p.z - c.z).multiplyScalar(PIECE_GATHER).applyQuaternion(q);
+      return { ...l, p: new THREE.Vector3(x + off.x, l.p.y, z + off.z), v: new THREE.Vector3(), rest: FLAT_TIME, r: l.pool ? l.r * PIECE_GATHER : l.r, rot: l.rot.clone().premultiply(q) };
+    });
+    const pool = lumps.find((l) => l.pool) ?? null;
+    const toilet = !!this.y.stage?.inToilet(x, z);
+    const heap: Heap = { lumps, geometry, group, dirty: true, pool, landed: part.length, toilet, cut: 0, parts: null, piece: true };
+    this.heaps.push(heap);
+    this.object.add(group);
+    while (this.heaps.length > MAX_HEAPS) this.dispose(this.heaps.shift()!);
   }
 
   /** 吐いたものを全部片付ける（吐いている最中ならそこでやめる） */
@@ -351,7 +444,7 @@ export class Vomit {
     const group = new THREE.Group();
     group.add(new THREE.Mesh(geometry, this.outline), new THREE.Mesh(geometry, this.material));
     group.children.forEach((m) => (m.frustumCulled = false));
-    const heap: Heap = { lumps: [], geometry, group, dirty: false, pool: null, landed: 0 };
+    const heap: Heap = { lumps: [], geometry, group, dirty: false, pool: null, landed: 0, toilet: false, cut: 0, parts: null };
     this.heaps.push(heap);
     this.object.add(group);
     while (this.heaps.length > MAX_HEAPS) this.dispose(this.heaps.shift()!);

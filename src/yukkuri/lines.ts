@@ -20,7 +20,8 @@ export type LineKey =
   | 'stashStart' | 'stashIn' | 'stashDone' | 'stashFull' | 'stashNone'
   | 'boxGo' | 'boxPush' | 'boxDone' | 'boxStuck' | 'boxBump'
   | 'dishNone' | 'dishEmpty' | 'waterNone'
-  | 'declarePoo' | 'declareExercise' | 'declareMeal' | 'declareSleep' | 'declareDrink'
+  | 'cleanNoToilet' | 'cleanNone' | 'cleanPick' | 'cleanDone'
+  | 'declarePoo' | 'declareExercise' | 'declareMeal' | 'declareSleep' | 'declareDrink' | 'declareClean'
   | 'greetYukkuri' | 'greetEatMe' | 'greetLast' | 'greetPlace'
   | 'dyingGasp';
 
@@ -83,12 +84,17 @@ const COMMON: Lines = {
   dishNone: ['ここにはおさらさんがないよ…'],
   dishEmpty: ['おさらさんがからっぽだよ…', 'ごはんさんがないよ…'],
   waterNone: ['ここにはおみずさんがないよ…'],
+  cleanNoToilet: ['ここにはおといれがないよ…'],
+  cleanNone: ['おといれのそとにはなにもないよ！'],
+  cleanPick: ['ゆぅ…くさいよ…', 'ゆげぇ…', 'ゆっくりできないよ…', 'がまんするよ…'],
+  cleanDone: ['ゆぅ…きれいになったよ…', 'ゆっくりおそうじできたよ…'],
   boxBump: ['ゆっ！？はこさんがあるよ…', 'とおれないよ…', 'ゆぅ…じゃまだよ…'],
   declarePoo: ['うんうんするよ！'],
   declareExercise: ['うんうんたいそうはじまるよ！'],
   declareMeal: ['すーぱーむしゃむしゃたいむはじまるよ！'],
   declareSleep: ['すーやすーやするよ！'],
   declareDrink: ['ごーくごーくするよ！'],
+  declareClean: ['ゆぅ…おといれにはこぶよ…'],
   greetYukkuri: ['ゆっくりしていってね！'],
   greetEatMe: ['おたべなさい！'],
   greetLast: ['もっとゆっくりしたかったよ…'],
@@ -151,12 +157,17 @@ const MARISA_NOZE: Partial<Lines> = {
   dishNone: ['ここにはおさらさんがないのぜ…'],
   dishEmpty: ['おさらさんがからっぽなのぜ…', 'ごはんさんがないのぜ…'],
   waterNone: ['ここにはおみずさんがないのぜ…'],
+  cleanNoToilet: ['ここにはおといれがないのぜ…'],
+  cleanNone: ['おといれのそとにはなにもないのぜ！'],
+  cleanPick: ['ゆぅ…くさいのぜ…', 'ゆげぇ…', 'ゆっくりできないのぜ…', 'がまんするのぜ…'],
+  cleanDone: ['ゆぅ…きれいになったのぜ…', 'ゆっくりおそうじできたのぜ…'],
   boxBump: ['ゆっ！？はこさんがじゃまなのぜ…', 'とおれないのぜ…', 'ゆぅ…どくのぜ…'],
   declarePoo: ['うんうんするのぜ！'],
   declareExercise: ['うんうんたいそうはじまるのぜ！'],
   declareMeal: ['すーぱーむしゃむしゃたいむはじまるのぜ！'],
   declareSleep: ['すーやすーやするのぜ！'],
   declareDrink: ['ごーくごーくするのぜ！'],
+  declareClean: ['ゆぅ…おといれにはこぶのぜ…'],
   greetLast: ['もっとゆっくりしたかったのぜ…'],
   greetPlace: ['ここを{species}のゆっくりぷれいすにするのぜ！'],
 };

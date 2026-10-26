@@ -29,6 +29,7 @@ import { Otabe } from './otabe';
 import { Home } from './home';
 import { DishEat } from './dishEat';
 import { ToiletTrip } from './toilet';
+import { Cleanup } from './cleanup';
 import type { Stage } from '../world/Stage';
 import { Voice, type LineKey } from './lines';
 import { faceFrame, TextFx } from './fx';
@@ -127,6 +128,8 @@ export class Yukkuri {
   readonly dishEat: DishEat;
   /** といれでうんうんする（といれのあるマップでは、といれへ行って塊がといれに納まる向き・位置でする。なければその場で） */
   readonly toilet: ToiletTrip;
+  /** といれへ運ぶ（といれの外のうんうん・吐いた餡子を、口でくわえてといれへ。うんうんは 3 回・餡子は 2 回に分けて） */
+  readonly cleanup: Cleanup;
   /** おうち（おうちせんげんをした場所。巣作りなどの起点。画面には出さない） */
   readonly home = new Home();
   /** セリフの口調（キャラクターごとに選ぶ。保存する） */
@@ -193,6 +196,7 @@ export class Yukkuri {
     this.feeding = new Feeding(this);
     this.dishEat = new DishEat(this);
     this.toilet = new ToiletTrip(this);
+    this.cleanup = new Cleanup(this);
     this.dropping = new Dropping(this);
     this.dropping.usePreset(this.presetId);
     this.exercise = new Exercise(this);
@@ -462,6 +466,7 @@ export class Yukkuri {
     this.box.update(dt); // 行き先を移動の処理より先に指示する
     this.dishEat.update(dt);
     this.toilet.update(dt); // といれへの行き先・身ぶりも移動の処理より先に指示する
+    this.cleanup.update(dt);
     this.greet.update(dt); // 宣言を言い終えたら動作を始める（動作の処理は次のステップから）
     this.otabe.update(dt); // 帽子を脱いでから割れる（割れるまでは移動を止めておく）
     this.vomit.update(dt); // 吐くときの身ぶりも移動の処理より先に指示する

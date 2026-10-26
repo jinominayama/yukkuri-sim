@@ -84,8 +84,10 @@ const HOP_BACK = 0.6;
 const RELIEF_TIME = 3.2;
 /** 体勢が落ち着くのを待つ上限（秒） */
 const WAIT_MAX = 8;
-/** 置いておく数の上限（古いものから消す） */
-const MAX_PILES = 12;
+/** 置いておく数の上限（古いものから消す。といれへ運ぶと 1 つが 3 つに分かれるので多めに） */
+const MAX_PILES = 40;
+/** といれへ口で運ぶとき、1 つの塊を分ける数（指示） */
+export const POO_PIECES = 3;
 /** 断面の分割数と、道筋に沿った輪の間隔（幅に対する比） */
 const SIDES = 24;
 const RING_STEP = 0.24;
@@ -123,6 +125,21 @@ interface Pile {
   side: THREE.Vector3;
   /** といれの中に出したか（汚れとして数えない：そばにいてもストレスがたまらず、嫌がって離れない） */
   toilet: boolean;
+  /** といれへ運んで減った数（POO_PIECES に分けたうち、体の側から何切れ持っていったか） */
+  cut: number;
+  /**
+   * 分けた一切れ（といれへ運んで置いたもの）：元の塊のどの所だったか（太さの形を、元の塊の長さに対する比 0〜1 の範囲で引き継ぐ）。
+   * 一切れはもう分けない（運ぶ途中でやめてといれの外に置いたものは、次はまるごと 1 回で運ぶ）
+   */
+  profile?: [number, number];
+}
+
+/** といれへ口で運ぶ：外にある塊 1 つの扱い（Cleanup が使う） */
+export interface LooseDirt {
+  /** 次に持っていく一切れの真ん中（地面の上） */
+  next(): THREE.Vector3 | null;
+  /** 次の一切れを持っていく（元の塊から消す）。といれに置く関数を返す。もうなければ null */
+  take(): ((x: number, z: number, yaw: number) => void) | null;
 }
 
 interface Ring {
@@ -315,7 +332,7 @@ export class Dropping {
   near(c: THREE.Vector3, radius: number, all = false): boolean {
     for (const p of this.piles) {
       if (p === this.current || (p.toilet && !all)) continue;
-      const from = p.detached >= 0 ? p.exitS : p.ground;
+      const from = this.lieFrom(p);
       for (let i = 0; i < p.pts.length; i += 2) {
         if (p.len[i] < from) continue;
         const d = Math.hypot(p.pts[i].x - c.x, p.pts[i].z - c.z);
@@ -329,8 +346,92 @@ export class Dropping {
   forEachPoint(f: (x: number, z: number) => void): void {
     for (const p of this.piles) {
       if (p === this.current || p.toilet) continue;
-      const from = p.detached >= 0 ? p.exitS : p.ground;
+      const from = this.lieFrom(p);
       for (let i = 0; i < p.pts.length; i += 2) if (p.len[i] >= from) f(p.pts[i].x, p.pts[i].z);
+    }
+  }
+
+  /**
+   * といれの外にある塊（出し終えて体から離れたもの）。体の側から POO_PIECES 切れに分けて、1 切れずつ持っていける
+   */
+  loose(): LooseDirt[] {
+    const out: LooseDirt[] = [];
+    for (const p of this.piles) {
+      if (p.toilet || p === this.current || p.detached < 0) continue;
+      const n = piecesOf(p);
+      const seg = (k: number) => {
+        const a = p.exitS, total = p.len[p.len.length - 1];
+        return [a + ((total - a) * k) / n, a + ((total - a) * (k + 1)) / n];
+      };
+      out.push({
+        next: () => (p.cut < n && this.piles.includes(p) ? this.pointAt(p, (seg(p.cut)[0] + seg(p.cut)[1]) / 2).setY(0) : null),
+        take: () => {
+          if (p.cut >= n || !this.piles.includes(p)) return null;
+          const [s0, s1] = seg(p.cut);
+          const total = p.len[p.len.length - 1];
+          // 太さの範囲：元の塊の長さに対する比（一切れならその一切れの範囲の中で）
+          const [u0, u1] = p.profile ?? [0, 1];
+          const profile: [number, number] = [u0 + ((u1 - u0) * s0) / total, u0 + ((u1 - u0) * s1) / total];
+          p.cut++;
+          if (p.cut >= n) {
+            this.piles.splice(this.piles.indexOf(p), 1);
+            this.dispose(p);
+          } else this.build(p);
+          return (x, z, yaw) => this.placePiece(p, s1 - s0, profile, x, z, yaw);
+        },
+      });
+    }
+    return out;
+  }
+
+  /** 地面に残っている所の始まり（道筋の長さ）：体の中に隠れている根元と、といれへ持っていった分を除く */
+  private lieFrom(p: Pile): number {
+    const base = p.detached >= 0 ? p.exitS : p.ground;
+    if (p.cut <= 0) return base;
+    const total = p.len[p.len.length - 1];
+    return Math.max(base, p.exitS + ((total - p.exitS) * p.cut) / piecesOf(p));
+  }
+
+  /** 道筋の長さ s の所 */
+  private pointAt(p: Pile, s: number): THREE.Vector3 {
+    let k = 0;
+    while (k < p.len.length - 2 && p.len[k + 1] < s) k++;
+    const f = THREE.MathUtils.clamp((s - p.len[k]) / Math.max(1e-6, p.len[k + 1] - p.len[k]), 0, 1);
+    return p.pts[k].clone().lerp(p.pts[k + 1], f);
+  }
+
+  /** 分けた一切れを（x, z）に向き yaw で置く（長さ len の真っすぐな塊。太さは元の塊の profile の範囲）。といれの中か外かは置いた所で決まる */
+  private placePiece(src: Pile, len: number, profile: [number, number], x: number, z: number, yaw: number): void {
+    const dir = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+    const a = new THREE.Vector3(x, src.h, z).addScaledVector(dir, -len / 2);
+    const pts: THREE.Vector3[] = [], lens: number[] = [];
+    const n = 12;
+    for (let i = 0; i <= n; i++) {
+      pts.push(a.clone().addScaledVector(dir, (len * i) / n));
+      lens.push((len * i) / n);
+    }
+    const geometry = new THREE.BufferGeometry();
+    const group = new THREE.Group();
+    group.add(new THREE.Mesh(geometry, this.outline), new THREE.Mesh(geometry, this.material));
+    group.children.forEach((m) => (m.frustumCulled = false));
+    const stage = this.y.stage;
+    const e = pts[pts.length - 1];
+    const toilet = !!stage && stage.inToilet(a.x, a.z) && stage.inToilet(e.x, e.z);
+    const piece: Pile = {
+      group, geometry, pts, len: lens, ground: 0, shown: len, settle: SETTLE_TIME, w: src.w, h: src.h,
+      side: new THREE.Vector3(0, 1, 0).cross(dir).normalize(), detached: SETTLE_TIME, exitS: 0, toilet, cut: 0, profile,
+    };
+    this.piles.push(piece);
+    this.object.add(group);
+    while (this.piles.length > MAX_PILES) this.dispose(this.piles.shift()!);
+    this.build(piece);
+  }
+
+  /** といれの中にあるものの道筋の点（水平）を順に渡す（といれへ運んだ一切れを置く所を選ぶのに使う） */
+  forEachToiletPoint(f: (x: number, z: number) => void): void {
+    for (const p of this.piles) {
+      if (!p.toilet) continue;
+      for (let i = 0; i < p.pts.length; i += 2) if (p.len[i] >= this.lieFrom(p)) f(p.pts[i].x, p.pts[i].z);
     }
   }
 
@@ -444,15 +545,17 @@ export class Dropping {
     group.add(new THREE.Mesh(geometry, this.outline), new THREE.Mesh(geometry, this.material));
     group.children.forEach((m) => (m.frustumCulled = false));
     const side = new THREE.Vector3(0, 1, 0).cross(out).normalize();
-    return { group, geometry, pts: raw, len, ground: len[n1], shown: 0, settle: -1, w, h, side, detached: -1, exitS, toilet: false };
+    return { group, geometry, pts: raw, len, ground: len[n1], shown: 0, settle: -1, w, h, side, detached: -1, exitS, toilet: false, cut: 0 };
   }
 
   /**
    * 太さの比（道筋に沿った長さ s。今出ている長さ shown）。出したものは道筋に沿って先へ押し出されるので、
    * 位置 s にあるのは、出し終わったときに total - shown + s の所に来る部分（先頭は先に出た一番太い所）
    */
-  private thickness(s: number, shown: number, total: number): number {
-    const u = THREE.MathUtils.clamp((total - shown + s) / total, 0, 1);
+  private thickness(s: number, shown: number, total: number, profile?: [number, number]): number {
+    // 分けた一切れは、元の塊のその範囲の太さ
+    const u = profile ? profile[0] + (profile[1] - profile[0]) * THREE.MathUtils.clamp(s / total, 0, 1)
+      : THREE.MathUtils.clamp((total - shown + s) / total, 0, 1);
     return END_RATIO + (1 - END_RATIO) * Math.pow(THREE.MathUtils.smoothstep(u, 0, THICK_AT), 0.8);
   }
 
@@ -467,7 +570,9 @@ export class Dropping {
     // 寝転がったまま体が動かないときは、根元は体の中に残す（下ろすと帽子などを突き抜ける）
     const drop = p.detached < 0 ? 0 : THREE.MathUtils.smoothstep(p.detached, 0, SETTLE_TIME);
     // 切り離したら、体の中にあった根元（exitS より手前）を消す
-    const from = p.detached < 0 ? 0 : p.exitS;
+    // といれへ運んで減ったら、体の側から持っていった分を除く
+    const cutTo = p.cut > 0 ? p.exitS + ((total - p.exitS) * p.cut) / piecesOf(p) : 0;
+    const from = Math.max(p.detached < 0 ? 0 : p.exitS, cutTo);
     // 地面に寝そべる向き（体から離れる水平な向き）
     const out = new THREE.Vector3().crossVectors(p.side, Y_UP);
     let k = 0;
@@ -484,7 +589,7 @@ export class Dropping {
       if (drop > 0 && d < p.ground) t = t.lerp(out, drop).normalize();
       const side = p.side;
       const up = new THREE.Vector3().crossVectors(t, side).normalize();
-      const th = this.thickness(d, p.shown, total);
+      const th = this.thickness(d, p.shown, total, p.profile);
       const hh = H * th;
       // 地面に寝そべる所は、底が地面に着く高さまで下げる（細い所も浮かない）
       if (c.y <= p.h * 1.01) c.y = Math.min(c.y, hh);
@@ -545,6 +650,11 @@ export class Dropping {
     this.object.remove(p.group);
     p.geometry.dispose();
   }
+}
+
+/** 塊を分ける数：出したままの塊は POO_PIECES、分けた一切れは 1（もう分けない） */
+function piecesOf(p: Pile): number {
+  return p.profile ? 1 : POO_PIECES;
 }
 
 function bezier(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3, t: number): THREE.Vector3 {

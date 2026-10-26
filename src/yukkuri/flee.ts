@@ -165,6 +165,6 @@ export class Flee {
   private busy(): boolean {
     const y = this.y;
     return y.feeding.active || y.dropping.active || y.exercise.active || y.vomit.active || y.moru.active || y.rest.active || y.puku.active
-      || y.toilet.active;
+      || y.cleanup.active || y.toilet.active;
   }
 }
